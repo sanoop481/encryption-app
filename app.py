@@ -388,7 +388,7 @@ def login():
         <input type="submit" value="Login">
     </form>
     <p style='color:red;'>{err}</p>
-    {('<p><a href="/register">Create an account</a></p>' if ALLOW_SELF_SIGNUP else signup_link)}
+    {('<p><a href="/register"></a></p>' if ALLOW_SELF_SIGNUP else signup_link)}
     """
 
 
