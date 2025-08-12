@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Virtual environment folder
+venv/
+env/
+
+# Uploads folder (optional — only if you don’t want uploaded files stored online)
+uploads/
