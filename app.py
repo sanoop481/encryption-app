@@ -804,6 +804,12 @@ def download_once(token: str):
     return send_file(file_path, as_attachment=True, download_name=download_name)
 
 
+# Simple health/uptime endpoint for monitoring
+@app.route("/health")
+def health():
+    return "OK", 200
+
+
 if __name__ == "__main__":
     # When testing locally, this will still run.
     # When deployed with gunicorn or a platform, they will ignore app.run.
