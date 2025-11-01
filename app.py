@@ -442,15 +442,46 @@ def decrypt_file_streaming(
 
 base_css = """
 <style>
-  body { background-color: #000; color: #00FF00; font-family: 'Courier New', monospace; margin: 40px auto; max-width: 900px; line-height: 1.5; text-shadow: 0 0 5px #00FF00; }
-  h2,h3 { color:#00FF00; text-shadow:0 0 10px #00FF00; }
-  input[type="file"], input[type="submit"], input[type="password"], input[type="text"] { background:#111; border:1px solid #00FF00; color:#00FF00; padding:10px; font-family:monospace; font-size:16px; margin:5px 0 15px 0; display:block; width:100%; box-sizing:border-box; }
-  input[type="submit"] { cursor:pointer; transition:background-color .3s; }
-  input[type="submit"]:hover { background:#00FF00; color:#000; font-weight:bold; }
-  form { border:2px solid #00FF00; padding:20px; border-radius:10px; box-shadow:0 0 20px #00FF00; }
-  a { color:#00FF00; font-weight:bold; text-decoration:none; }
-  small { color: #7CFC00; }
+  :root {
+    --bg: #000; --fg: #00FF00; --muted: #7CFC00; --border: #00FF00; --input-bg: #111; --shadow: 0 0 20px #00FF00; --font-body: 'Segoe UI', Tahoma, sans-serif; --font-mono: 'Courier New', monospace;
+  }
+  [data-theme="modern"] {
+    --bg: #0f1318; --fg: #e6e8eb; --muted: #94a3b8; --border: #334155; --input-bg: #111827; --shadow: 0 10px 24px rgba(0,0,0,.25); --font-body: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  }
+  body { background-color: var(--bg); color: var(--fg); font-family: var(--font-body); margin: 40px auto; max-width: 900px; line-height: 1.7; }
+  h2,h3 { color: var(--fg); font-family: var(--font-mono); letter-spacing: .5px; }
+  .card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); padding: 20px; border-radius: 12px; box-shadow: var(--shadow); }
+  input[type="file"], input[type="submit"], input[type="password"], input[type="text"] { background: var(--input-bg); border:1px solid var(--border); color: var(--fg); padding:12px 14px; font-family: var(--font-mono); font-size:16px; margin:6px 0 16px 0; display:block; width:100%; box-sizing:border-box; border-radius:8px; }
+  input[type="submit"] { cursor:pointer; transition: all .2s ease; font-weight:600; }
+  input[type="submit"]:hover { background: var(--fg); color: var(--bg); }
+  form { border:1px solid var(--border); padding:20px; border-radius:12px; box-shadow: var(--shadow); }
+  a { color: var(--fg); font-weight:600; text-decoration: none; }
+  .muted { color: var(--muted); }
+  .topbar { display:flex; justify-content: space-between; align-items:center; position: sticky; top: 0; background: var(--bg); padding: 10px 0; margin-bottom: 20px; }
+  .topbar .links a { margin-right: 12px; opacity:.9; }
+  .toggle { border:1px solid var(--border); background: var(--input-bg); color: var(--fg); padding:8px 12px; border-radius:8px; cursor:pointer; font-family: var(--font-mono); }
 </style>
+<div class="topbar">
+  <div class="links">
+    <a href="/">Encrypt</a>
+    <a href="/decrypt">Decrypt</a>
+    <a href="/inbox">Inbox</a>
+  </div>
+  <button class="toggle" id="themeToggle" type="button">Toggle Theme</button>
+  <script>
+    (function(){
+      const key = 'theme.pref';
+      const root = document.documentElement;
+      const pref = localStorage.getItem(key) || 'hacker';
+      if (pref === 'modern') root.setAttribute('data-theme','modern');
+      document.getElementById('themeToggle').addEventListener('click', function(){
+        const next = root.getAttribute('data-theme') === 'modern' ? 'hacker' : 'modern';
+        if (next === 'modern') root.setAttribute('data-theme','modern'); else root.removeAttribute('data-theme');
+        localStorage.setItem(key, next);
+      });
+    })();
+  </script>
+</div>
 """
 
 
