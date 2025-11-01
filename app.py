@@ -451,12 +451,16 @@ base_css = """
   body { background-color: var(--bg); color: var(--fg); font-family: var(--font-body); margin: 40px auto; max-width: 900px; line-height: 1.7; }
   h2,h3 { color: var(--fg); font-family: var(--font-mono); letter-spacing: .5px; }
   .card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); padding: 20px; border-radius: 12px; box-shadow: var(--shadow); }
+  .container { padding: 0 20px; }
+  .stack { display:grid; gap:16px; }
   input[type="file"], input[type="submit"], input[type="password"], input[type="text"] { background: var(--input-bg); border:1px solid var(--border); color: var(--fg); padding:12px 14px; font-family: var(--font-mono); font-size:16px; margin:6px 0 16px 0; display:block; width:100%; box-sizing:border-box; border-radius:8px; }
   input[type="submit"] { cursor:pointer; transition: all .2s ease; font-weight:600; }
   input[type="submit"]:hover { background: var(--fg); color: var(--bg); }
   form { border:1px solid var(--border); padding:20px; border-radius:12px; box-shadow: var(--shadow); }
   a { color: var(--fg); font-weight:600; text-decoration: none; }
   .muted { color: var(--muted); }
+  .alert-success { background: rgba(34,197,94,.1); border: 1px solid #22c55e33; color: #22c55e; padding: 10px 12px; border-radius: 8px; }
+  .alert-error { background: rgba(239,68,68,.1); border: 1px solid #ef444433; color: #ef4444; padding: 10px 12px; border-radius: 8px; }
   .topbar { display:flex; justify-content: space-between; align-items:center; position: sticky; top: 0; background: var(--bg); padding: 10px 0; margin-bottom: 20px; }
   .topbar .links a { margin-right: 12px; opacity:.9; }
   .toggle { border:1px solid var(--border); background: var(--input-bg); color: var(--fg); padding:8px 12px; border-radius:8px; cursor:pointer; font-family: var(--font-mono); }
@@ -466,6 +470,7 @@ base_css = """
     <a href="/">Encrypt</a>
     <a href="/decrypt">Decrypt</a>
     <a href="/inbox">Inbox</a>
+    <a href="/logout">Logout</a>
   </div>
   <button class="toggle" id="themeToggle" type="button">Toggle Theme</button>
   <script>
@@ -500,14 +505,18 @@ def login():
 
     signup_link = ("<p><a href=\"/register\">Create an account</a></p>" if ALLOW_SELF_SIGNUP else "<small>Signup disabled</small>")
     return base_css + f"""
-    <h2>Login</h2>
-    <form method="POST">
-        Username: <input type="text" name="username" required><br>
-        Password: <input type="password" name="password" required><br>
-        <input type="submit" value="Login">
-    </form>
-    <p style='color:red;'>{err}</p>
-    {signup_link}
+    <div class=\"container stack\">
+      <div class=\"card\">
+        <h2>Login</h2>
+        <form method=\"POST\">
+            Username: <input type=\"text\" name=\"username\" required><br>
+            Password: <input type=\"password\" name=\"password\" required><br>
+            <input type=\"submit\" value=\"Login\">
+        </form>
+        {('<div class=\\"alert-error\\">' + err + '</div>') if err else ''}
+        {signup_link}
+      </div>
+    </div>
     """
 
 
@@ -530,16 +539,20 @@ def register():
             except Exception as e:
                 err = str(e)
     return base_css + f"""
-    <h2>Register</h2>
-    <form method="POST">
-        Username: <input type="text" name="username" required><br>
-        Password: <input type="password" name="password" required><br>
-        Confirm: <input type="password" name="confirm" required><br>
-        <input type="submit" value="Create account">
-    </form>
-    <p style='color:lime;'>{ok}</p>
-    <p style='color:red;'>{err}</p>
-    <p><a href="/login">Back to Login</a></p>
+    <div class=\"container stack\">
+      <div class=\"card\">
+        <h2>Register</h2>
+        <form method=\"POST\">
+            Username: <input type=\"text\" name=\"username\" required><br>
+            Password: <input type=\"password\" name=\"password\" required><br>
+            Confirm: <input type=\"password\" name=\"confirm\" required><br>
+            <input type=\"submit\" value=\"Create account\">
+        </form>
+        {('<div class=\\"alert-success\\">' + ok + '</div>') if ok else ''}
+        {('<div class=\\"alert-error\\">' + err + '</div>') if err else ''}
+        <p><a href=\"/login\">Back to Login</a></p>
+      </div>
+    </div>
     """
 
 
@@ -589,19 +602,23 @@ def index():
             token = _create_download_token(encrypted_path, encrypted_filename, session.get("username", ""))
             send_token = _create_transfer_token(encrypted_path, encrypted_filename, session.get("username", ""))
             return base_css + f"""
-                <h3>Encryption completed!</h3>
-                <p><a href="/download/{token}">Download Encrypted File</a></p>
-                <p><strong>Keep the original photo/video and passphrase (if used) safe.</strong> You will need the same to decrypt.</p>
-                <p><a href="/decrypt">Go to Decryption Page</a></p>
-                <small>Note: download link is one-time. The file is deleted after download.</small>
-                <hr>
-                <h3>Send Encrypted File to a User</h3>
-                <form method="POST" action="/send">
-                    <input type="hidden" name="token" value="{send_token}">
-                    Recipient Username: <input type="text" name="recipient" required><br>
-                    <input type="submit" value="Send to User">
-                </form>
-                <p><a href="/inbox">Go to Inbox</a></p>
+                <div class=\"container stack\">
+                  <div class=\"card\">
+                    <h3>Encryption completed!</h3>
+                    <p><a href=\"/download/{token}\">Download Encrypted File</a></p>
+                    <p class=\"muted\"><strong>Keep the original photo/video and passphrase (if used) safe.</strong> You will need the same to decrypt.</p>
+                    <p><a href=\"/decrypt\">Go to Decryption Page</a></p>
+                    <small class=\"muted\">Note: download link is one-time. The file is deleted after download.</small>
+                    <hr>
+                    <h3>Send Encrypted File to a User</h3>
+                    <form method=\"POST\" action=\"/send\"> 
+                        <input type=\"hidden\" name=\"token\" value=\"{send_token}\"> 
+                        Recipient Username: <input type=\"text\" name=\"recipient\" required><br>
+                        <input type=\"submit\" value=\"Send to User\"> 
+                    </form>
+                    <p><a href=\"/inbox\">Go to Inbox</a></p>
+                  </div>
+                </div>
             """
         except Exception as e:
             # Attempt to clean request directory (best-effort)
@@ -613,15 +630,18 @@ def index():
             return base_css + f"<h3 style='color:red;'>Encryption failed:</h3><pre>{str(e)}</pre>"
 
     return base_css + """
-    <h2>Encrypt Any File — Entropy must be Image or Video</h2>
-    <form method="POST" enctype="multipart/form-data">
-        Photo or Video (used as entropy source): <input type="file" name="entropy" accept="image/*,video/*" required><br>
-        Optional passphrase (recommended): <input type="password" name="passphrase" placeholder="Leave empty to skip"><br>
-        File to encrypt: <input type="file" name="data_file" required><br>
-        <input type="submit" value="Encrypt">
-    </form>
-    <p><a href="/decrypt">Go to Decryption Page</a></p>
-    <p><a href="/inbox">Inbox</a></p>
+    <div class=\"container stack\"> 
+      <div class=\"card\"> 
+        <h2>Encrypt Any File — Entropy must be Image or Video</h2>
+        <form method=\"POST\" enctype=\"multipart/form-data\"> 
+            Photo or Video (used as entropy source): <input type=\"file\" name=\"entropy\" accept=\"image/*,video/*\" required><br>
+            Optional passphrase (recommended): <input type=\"password\" name=\"passphrase\" placeholder=\"Leave empty to skip\"><br>
+            File to encrypt: <input type=\"file\" name=\"data_file\" required><br>
+            <input type=\"submit\" value=\"Encrypt\"> 
+        </form>
+        <p><a href=\"/decrypt\">Go to Decryption Page</a> · <a href=\"/inbox\">Inbox</a></p>
+      </div>
+    </div>
     """
 
 
@@ -662,10 +682,14 @@ def decrypt():
             download_name = os.path.basename(decrypted_path)
             token = _create_download_token(decrypted_path, download_name, session.get("username", ""))
             return base_css + f"""
-                <h3>Decryption successful!</h3>
-                <p><a href="/download/{token}">Download Decrypted File</a></p>
-                <p><a href="/">Back to Encryption</a></p>
-                <small>Note: download link is one-time. The file is deleted after download.</small>
+                <div class=\"container stack\">
+                  <div class=\"card\">
+                    <h3>Decryption successful!</h3>
+                    <p><a href=\"/download/{token}\">Download Decrypted File</a></p>
+                    <p><a href=\"/\">Back to Encryption</a></p>
+                    <small class=\"muted\">Note: download link is one-time. The file is deleted after download.</small>
+                  </div>
+                </div>
             """
         except ValueError as e:
             try:
@@ -683,15 +707,18 @@ def decrypt():
             return base_css + f"<h3 style='color:red;'>Unexpected error:</h3><pre>{str(e)}</pre>"
 
     return base_css + """
-    <h2>Decrypt File (requires original photo/video and passphrase if used)</h2>
-    <form method="POST" enctype="multipart/form-data">
-        Encrypted file: <input type="file" name="enc_file" required><br>
-        Original photo or video (used at encryption time): <input type="file" name="entropy" accept="image/*,video/*" required><br>
-        Passphrase (if you set one during encryption): <input type="password" name="passphrase" placeholder="Leave empty if none"><br>
-        <input type="submit" value="Decrypt">
-    </form>
-    <p><a href="/">Go back to Encryption Page</a></p>
-    <p><a href="/inbox">Inbox</a></p>
+    <div class=\"container stack\">
+      <div class=\"card\">
+        <h2>Decrypt File (requires original photo/video and passphrase if used)</h2>
+        <form method=\"POST\" enctype=\"multipart/form-data\">
+            Encrypted file: <input type=\"file\" name=\"enc_file\" required><br>
+            Original photo or video (used at encryption time): <input type=\"file\" name=\"entropy\" accept=\"image/*,video/*\" required><br>
+            Passphrase (if you set one during encryption): <input type=\"password\" name=\"passphrase\" placeholder=\"Leave empty if none\"><br>
+            <input type=\"submit\" value=\"Decrypt\">
+        </form>
+        <p><a href=\"/\">Back to Encryption</a> · <a href=\"/inbox\">Inbox</a></p>
+      </div>
+    </div>
     """
 
 
@@ -771,11 +798,15 @@ def inbox():
     ) or "<li>No messages.</li>"
 
     return base_css + f"""
-        <h2>Inbox</h2>
-        <ul>
-            {items_html}
-        </ul>
-        <p><a href="/">Back to Encryption</a></p>
+        <div class=\"container stack\">
+          <div class=\"card\">
+            <h2>Inbox</h2>
+            <ul>
+                {items_html}
+            </ul>
+            <p><a href=\"/\">Back to Encryption</a></p>
+          </div>
+        </div>
     """
 
 
