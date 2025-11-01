@@ -44,9 +44,34 @@ USERS_DB_PATH = os.environ.get("USERS_DB_PATH", os.path.join(os.path.dirname(__f
 USERS_LOCK = Lock()
 ALLOW_SELF_SIGNUP = os.environ.get("ALLOW_SELF_SIGNUP", "1") not in {"0", "false", "False"}
 
-# One-time download token store (in-memory). Maps token -> (file_path, download_name, owner_username)
-_DOWNLOAD_TOKENS: dict[str, Tuple[str, str, str]] = {}
+# Inbox storage for user-to-user delivery
+INBOX_FOLDER = os.path.join(BASE_UPLOAD_FOLDER, "inbox")
+os.makedirs(INBOX_FOLDER, exist_ok=True)
+
+# One-time download token store (persisted). Maps token -> (file_path, download_name, owner_username)
 _TOKENS_LOCK = Lock()
+TOKENS_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens.json")
+
+
+def _load_tokens() -> dict:
+    with _TOKENS_LOCK:
+        if not os.path.exists(TOKENS_DB_PATH):
+            return {}
+        try:
+            with open(TOKENS_DB_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+
+def _save_tokens(tokens: dict) -> None:
+    with _TOKENS_LOCK:
+        os.makedirs(os.path.dirname(TOKENS_DB_PATH), exist_ok=True)
+        tmp_path = TOKENS_DB_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(tokens, f)
+        os.replace(tmp_path, TOKENS_DB_PATH)
 
 
 def _load_users() -> dict:
@@ -86,6 +111,11 @@ def _verify_user(username: str, password: str) -> bool:
     users = _load_users()
     ph = users.get(username or "")
     return bool(ph and check_password_hash(ph, password or ""))
+
+
+def _user_exists(username: str) -> bool:
+    users = _load_users()
+    return (username or "") in users
 
 
 def login_required(fn):
@@ -201,14 +231,29 @@ def _make_request_dir() -> str:
 
 def _create_download_token(file_path: str, download_name: str, owner_username: str) -> str:
     token = uuid.uuid4().hex
-    with _TOKENS_LOCK:
-        _DOWNLOAD_TOKENS[token] = (file_path, download_name, owner_username)
+    tokens = _load_tokens()
+    tokens[token] = (file_path, download_name, owner_username)
+    _save_tokens(tokens)
     return token
 
 
 def _pop_download_token(token: str) -> Optional[Tuple[str, str, str]]:
-    with _TOKENS_LOCK:
-        return _DOWNLOAD_TOKENS.pop(token, None)
+    tokens = _load_tokens()
+    entry = tokens.pop(token, None)
+    _save_tokens(tokens)
+    return tuple(entry) if entry else None
+
+
+def _get_download_token(token: str) -> Optional[Tuple[str, str, str]]:
+    tokens = _load_tokens()
+    entry = tokens.get(token)
+    return tuple(entry) if entry else None
+
+
+def _ensure_inbox_dir(username: str) -> str:
+    user_dir = os.path.join(INBOX_FOLDER, secure_filename(username or ""))
+    os.makedirs(user_dir, exist_ok=True)
+    return user_dir
 
 
 def encrypt_file_streaming(
@@ -379,7 +424,7 @@ def login():
         else:
             err = "Invalid username or password."
 
-    signup_link = "" if ALLOW_SELF_SIGNUP else "<small>Signup disabled</small>"
+    signup_link = ("<p><a href=\"/register\">Create an account</a></p>" if ALLOW_SELF_SIGNUP else "<small>Signup disabled</small>")
     return base_css + f"""
     <h2>Login</h2>
     <form method="POST">
@@ -388,7 +433,7 @@ def login():
         <input type="submit" value="Login">
     </form>
     <p style='color:red;'>{err}</p>
-    {('<p><a href="/register"></a></p>' if ALLOW_SELF_SIGNUP else signup_link)}
+    {signup_link}
     """
 
 
@@ -474,6 +519,14 @@ def index():
                 <p><strong>Keep the original photo/video and passphrase (if used) safe.</strong> You will need the same to decrypt.</p>
                 <p><a href="/decrypt">Go to Decryption Page</a></p>
                 <small>Note: download link is one-time. The file is deleted after download.</small>
+                <hr>
+                <h3>Send Encrypted File to a User</h3>
+                <form method="POST" action="/send">
+                    <input type="hidden" name="token" value="{token}">
+                    Recipient Username: <input type="text" name="recipient" required><br>
+                    <input type="submit" value="Send to User">
+                </form>
+                <p><a href="/inbox">Go to Inbox</a></p>
             """
         except Exception as e:
             # Attempt to clean request directory (best-effort)
@@ -493,6 +546,7 @@ def index():
         <input type="submit" value="Encrypt">
     </form>
     <p><a href="/decrypt">Go to Decryption Page</a></p>
+    <p><a href="/inbox">Inbox</a></p>
     """
 
 
@@ -562,7 +616,114 @@ def decrypt():
         <input type="submit" value="Decrypt">
     </form>
     <p><a href="/">Go back to Encryption Page</a></p>
+    <p><a href="/inbox">Inbox</a></p>
     """
+
+
+@app.route("/send", methods=["POST"])
+@login_required
+def send_to_user():
+    sender = session.get("username", "")
+    recipient = (request.form.get("recipient") or "").strip()
+    token = (request.form.get("token") or "").strip()
+
+    if not recipient or not token:
+        return base_css + "<p style='color:red;'>Missing recipient or file token.</p><p><a href='/'>Back</a></p>"
+
+    if not _user_exists(recipient):
+        return base_css + f"<p style='color:red;'>Recipient '{recipient}' does not exist.</p><p><a href='/'>Back</a></p>"
+
+    entry = _get_download_token(token)
+    if not entry:
+        return base_css + "<p style='color:red;'>File token is invalid or already used.</p><p><a href='/'>Back</a></p>"
+
+    file_path, download_name, owner_username = entry
+    if owner_username != sender:
+        return base_css + "<p style='color:red;'>Not authorized to send this file.</p><p><a href='/'>Back</a></p>"
+
+    if not os.path.exists(file_path):
+        return base_css + "<p style='color:red;'>The encrypted file is no longer available.</p><p><a href='/'>Back</a></p>"
+
+    inbox_dir = _ensure_inbox_dir(recipient)
+    safe_sender = secure_filename(sender)
+    # Preserve original encrypted name, include sender for context
+    inbox_name = f"{uuid.uuid4().hex}_from_{safe_sender}_{download_name}"
+    dest_path = os.path.join(inbox_dir, inbox_name)
+
+    try:
+        os.replace(file_path, dest_path)
+    except Exception:
+        # Fallback to copy+remove
+        try:
+            shutil.copy2(file_path, dest_path)
+            os.remove(file_path)
+        except Exception as e:
+            return base_css + f"<h3 style='color:red;'>Failed to deliver:</h3><pre>{str(e)}</pre><p><a href='/'>Back</a></p>"
+
+    # Invalidate the original download token after successful delivery
+    _pop_download_token(token)
+
+    # Best-effort cleanup of the old per-request directory
+    try:
+        parent_dir = os.path.dirname(file_path)
+        if os.path.exists(parent_dir):
+            shutil.rmtree(parent_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return base_css + f"""
+        <h3>File sent to {recipient}!</h3>
+        <p><a href="/inbox">Go to your Inbox</a></p>
+        <p><a href="/">Back to Encryption</a></p>
+    """
+
+
+@app.route("/inbox", methods=["GET"])
+@login_required
+def inbox():
+    username = session.get("username", "")
+    user_dir = _ensure_inbox_dir(username)
+
+    try:
+        files = [f for f in os.listdir(user_dir) if os.path.isfile(os.path.join(user_dir, f))]
+    except Exception:
+        files = []
+
+    items_html = "".join(
+        f"<li>{f} — <a href=\"/inbox/download/{secure_filename(f)}\">Download</a></li>"
+        for f in sorted(files)
+    ) or "<li>No messages.</li>"
+
+    return base_css + f"""
+        <h2>Inbox</h2>
+        <ul>
+            {items_html}
+        </ul>
+        <p><a href="/">Back to Encryption</a></p>
+    """
+
+
+@app.route("/inbox/download/<name>")
+@login_required
+def inbox_download(name: str):
+    username = session.get("username", "")
+    user_dir = _ensure_inbox_dir(username)
+    safe_name = secure_filename(name)
+    file_path = os.path.join(user_dir, safe_name)
+
+    if not os.path.exists(file_path):
+        abort(404)
+
+    @after_this_request
+    def cleanup(response):
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+        return response
+
+    return send_file(file_path, as_attachment=True, download_name=safe_name)
 
 
 @app.route("/download/<token>")

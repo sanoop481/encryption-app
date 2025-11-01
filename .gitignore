@@ -1,3 +1,34 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local uploads and tokens
+uploads/
+!uploads/.gitkeep
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Env files
+.env
+*.env
+
+# Logs
+*.log
+
+# Compiled
+build/
+dist/
+*.egg-info/
 # Python cache
 __pycache__/
 *.pyc
