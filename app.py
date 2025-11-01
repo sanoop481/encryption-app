@@ -51,6 +51,7 @@ os.makedirs(INBOX_FOLDER, exist_ok=True)
 # One-time download token store (persisted). Maps token -> (file_path, download_name, owner_username)
 _TOKENS_LOCK = Lock()
 TOKENS_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens.json")
+TOKENS_SEND_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens_send.json")
 
 
 def _load_tokens() -> dict:
@@ -72,6 +73,27 @@ def _save_tokens(tokens: dict) -> None:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(tokens, f)
         os.replace(tmp_path, TOKENS_DB_PATH)
+
+
+def _load_transfer_tokens() -> dict:
+    with _TOKENS_LOCK:
+        if not os.path.exists(TOKENS_SEND_DB_PATH):
+            return {}
+        try:
+            with open(TOKENS_SEND_DB_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+
+def _save_transfer_tokens(tokens: dict) -> None:
+    with _TOKENS_LOCK:
+        os.makedirs(os.path.dirname(TOKENS_SEND_DB_PATH), exist_ok=True)
+        tmp_path = TOKENS_SEND_DB_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(tokens, f)
+        os.replace(tmp_path, TOKENS_SEND_DB_PATH)
 
 
 def _load_users() -> dict:
@@ -247,6 +269,27 @@ def _pop_download_token(token: str) -> Optional[Tuple[str, str, str]]:
 def _get_download_token(token: str) -> Optional[Tuple[str, str, str]]:
     tokens = _load_tokens()
     entry = tokens.get(token)
+    return tuple(entry) if entry else None
+
+
+def _create_transfer_token(file_path: str, download_name: str, owner_username: str) -> str:
+    token = uuid.uuid4().hex
+    tokens = _load_transfer_tokens()
+    tokens[token] = (file_path, download_name, owner_username)
+    _save_transfer_tokens(tokens)
+    return token
+
+
+def _get_transfer_token(token: str) -> Optional[Tuple[str, str, str]]:
+    tokens = _load_transfer_tokens()
+    entry = tokens.get(token)
+    return tuple(entry) if entry else None
+
+
+def _pop_transfer_token(token: str) -> Optional[Tuple[str, str, str]]:
+    tokens = _load_transfer_tokens()
+    entry = tokens.pop(token, None)
+    _save_transfer_tokens(tokens)
     return tuple(entry) if entry else None
 
 
@@ -513,6 +556,7 @@ def index():
                     pass
 
             token = _create_download_token(encrypted_path, encrypted_filename, session.get("username", ""))
+            send_token = _create_transfer_token(encrypted_path, encrypted_filename, session.get("username", ""))
             return base_css + f"""
                 <h3>Encryption completed!</h3>
                 <p><a href="/download/{token}">Download Encrypted File</a></p>
@@ -522,7 +566,7 @@ def index():
                 <hr>
                 <h3>Send Encrypted File to a User</h3>
                 <form method="POST" action="/send">
-                    <input type="hidden" name="token" value="{token}">
+                    <input type="hidden" name="token" value="{send_token}">
                     Recipient Username: <input type="text" name="recipient" required><br>
                     <input type="submit" value="Send to User">
                 </form>
@@ -633,7 +677,8 @@ def send_to_user():
     if not _user_exists(recipient):
         return base_css + f"<p style='color:red;'>Recipient '{recipient}' does not exist.</p><p><a href='/'>Back</a></p>"
 
-    entry = _get_download_token(token)
+    # Use transfer token store so downloading doesn't invalidate sending
+    entry = _get_transfer_token(token)
     if not entry:
         return base_css + "<p style='color:red;'>File token is invalid or already used.</p><p><a href='/'>Back</a></p>"
 
@@ -660,8 +705,8 @@ def send_to_user():
         except Exception as e:
             return base_css + f"<h3 style='color:red;'>Failed to deliver:</h3><pre>{str(e)}</pre><p><a href='/'>Back</a></p>"
 
-    # Invalidate the original download token after successful delivery
-    _pop_download_token(token)
+    # Invalidate the transfer token after successful delivery
+    _pop_transfer_token(token)
 
     # Best-effort cleanup of the old per-request directory
     try:
