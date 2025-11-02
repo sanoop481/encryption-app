@@ -4,11 +4,12 @@ import struct
 import shutil
 import hashlib
 import json
+import time
 from typing import Tuple, Optional
 from threading import Lock
 from functools import wraps
 
-from flask import Flask, request, send_file, abort, after_this_request, session, redirect, url_for
+from flask import Flask, request, send_file, abort, after_this_request, session, redirect, url_for, jsonify
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -16,6 +17,7 @@ import cv2
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import tempfile
 
 # Storage and limits
 BASE_UPLOAD_FOLDER = "uploads"
@@ -39,6 +41,14 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH_BYTES
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
+# Session cookie hardening
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.environ.get("FLASK_SECURE_COOKIES", "1") not in {"0", "false", "False"},
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+app.permanent_session_lifetime = 60 * 60 * 24  # 1 day
+
 # Simple user storage (JSON file with hashed passwords)
 USERS_DB_PATH = os.environ.get("USERS_DB_PATH", os.path.join(os.path.dirname(__file__), "users.json"))
 USERS_LOCK = Lock()
@@ -48,11 +58,33 @@ ALLOW_SELF_SIGNUP = os.environ.get("ALLOW_SELF_SIGNUP", "1") not in {"0", "false
 INBOX_FOLDER = os.path.join(BASE_UPLOAD_FOLDER, "inbox")
 os.makedirs(INBOX_FOLDER, exist_ok=True)
 
-# One-time download token store (persisted). Maps token -> (file_path, download_name, owner_username)
+# One-time download token store (persisted). Maps token -> (file_path, download_name, owner_username, created, ttl)
 _TOKENS_LOCK = Lock()
 TOKENS_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens.json")
 TOKENS_SEND_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens_send.json")
 
+DEFAULT_TOKEN_TTL = 60 * 60 * 24  # 24 hours
+
+# Hardcoded admin credentials
+ADMIN_USERNAME = "s4sanoop"
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "sanoop46")  # you can override via env
+
+def _purge_expired(tokens: dict) -> dict:
+    now = int(time.time())
+    out = {}
+    for k, v in tokens.items():
+        if isinstance(v, (list, tuple)) and len(v) >= 3:
+            if len(v) >= 5:
+                created = int(v[3])
+                ttl = int(v[4])
+            else:
+                created = 0
+                ttl = 0
+            if ttl == 0 or (created + ttl) > now:
+                out[k] = v
+        else:
+            out[k] = v
+    return out
 
 def _load_tokens() -> dict:
     with _TOKENS_LOCK:
@@ -61,19 +93,21 @@ def _load_tokens() -> dict:
         try:
             with open(TOKENS_DB_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data if isinstance(data, dict) else {}
+                if not isinstance(data, dict):
+                    return {}
+                data = _purge_expired(data)
+                return data
         except Exception:
             return {}
 
-
 def _save_tokens(tokens: dict) -> None:
     with _TOKENS_LOCK:
+        tokens = _purge_expired(tokens)
         os.makedirs(os.path.dirname(TOKENS_DB_PATH), exist_ok=True)
         tmp_path = TOKENS_DB_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(tokens, f)
         os.replace(tmp_path, TOKENS_DB_PATH)
-
 
 def _load_transfer_tokens() -> dict:
     with _TOKENS_LOCK:
@@ -82,19 +116,21 @@ def _load_transfer_tokens() -> dict:
         try:
             with open(TOKENS_SEND_DB_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data if isinstance(data, dict) else {}
+                if not isinstance(data, dict):
+                    return {}
+                data = _purge_expired(data)
+                return data
         except Exception:
             return {}
 
-
 def _save_transfer_tokens(tokens: dict) -> None:
     with _TOKENS_LOCK:
+        tokens = _purge_expired(tokens)
         os.makedirs(os.path.dirname(TOKENS_SEND_DB_PATH), exist_ok=True)
         tmp_path = TOKENS_SEND_DB_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(tokens, f)
         os.replace(tmp_path, TOKENS_SEND_DB_PATH)
-
 
 def _load_users() -> dict:
     with USERS_LOCK:
@@ -107,7 +143,6 @@ def _load_users() -> dict:
         except Exception:
             return {}
 
-
 def _save_users(users: dict) -> None:
     with USERS_LOCK:
         tmp_path = USERS_DB_PATH + ".tmp"
@@ -115,9 +150,10 @@ def _save_users(users: dict) -> None:
             json.dump(users, f)
         os.replace(tmp_path, USERS_DB_PATH)
 
-
 def _add_user(username: str, password: str) -> None:
     username = (username or "").strip()
+    if username.lower() == ADMIN_USERNAME.lower():
+        raise ValueError("Cannot register reserved username.")
     if not username or len(username) < 3:
         raise ValueError("Username must be at least 3 characters.")
     if not password or len(password) < 8:
@@ -128,17 +164,30 @@ def _add_user(username: str, password: str) -> None:
     users[username] = generate_password_hash(password)
     _save_users(users)
 
-
 def _verify_user(username: str, password: str) -> bool:
+    username = (username or "").strip()
+    print(f"DEBUG: Verifying user '{username}' with password: '{password}'")
+    
+    # Hardcoded admin check
+    if username == ADMIN_USERNAME:
+        print(f"DEBUG: Admin user detected")
+        print(f"DEBUG: Expected password: '{ADMIN_PASSWORD}'")
+        print(f"DEBUG: Provided password: '{password}'")
+        print(f"DEBUG: Password match: {password == ADMIN_PASSWORD}")
+        return password == ADMIN_PASSWORD
+        
     users = _load_users()
     ph = users.get(username or "")
-    return bool(ph and check_password_hash(ph, password or ""))
-
+    result = bool(ph and check_password_hash(ph, password or ""))
+    print(f"DEBUG: Regular user check result: {result}")
+    return result
 
 def _user_exists(username: str) -> bool:
+    if (username or "").strip() == ADMIN_USERNAME:
+        # admin is considered an existing account for auth purposes
+        return True
     users = _load_users()
     return (username or "") in users
-
 
 def login_required(fn):
     @wraps(fn)
@@ -149,11 +198,17 @@ def login_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if session.get("username") != ADMIN_USERNAME:
+            return redirect(url_for("login", next=url_for("admin")))
+        return fn(*args, **kwargs)
+    return wrapper
 
 def is_allowed_entropy_file(filename: str) -> bool:
     ext = os.path.splitext(filename or "")[1].lower()
     return ext in ALLOWED_ENTROPY_EXTS
-
 
 def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> bytes:
     """
@@ -176,8 +231,13 @@ def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> 
     if ext in vid_exts:
         cap = cv2.VideoCapture(media_path)
         if not cap.isOpened():
-            cap.release()
-            raise RuntimeError("Could not open video for key derivation.")
+            # small wait loop to avoid transient open issues
+            start = time.time()
+            while not cap.isOpened() and (time.time() - start) < 5.0:
+                time.sleep(0.05)
+            if not cap.isOpened():
+                cap.release()
+                raise RuntimeError("Could not open video for key derivation.")
 
         try:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -186,6 +246,7 @@ def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> 
 
         hasher = hashlib.sha256()
         sampled = 0
+        frames_to_sample = min(max(1, frames_to_sample), 12)
 
         if total_frames and total_frames > 0:
             # Evenly sample indices across the full range
@@ -214,7 +275,6 @@ def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> 
 
     raise ValueError("Unsupported media type for key derivation.")
 
-
 def derive_enc_key(raw_key: bytes, salt: bytes, passphrase: Optional[str]) -> bytes:
     """
     Derive a 32-byte AES key using HKDF-SHA256.
@@ -239,10 +299,8 @@ def derive_enc_key(raw_key: bytes, salt: bytes, passphrase: Optional[str]) -> by
     )
     return hkdf.derive(raw_key)  # 32 bytes
 
-
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
-
 
 def _make_request_dir() -> str:
     req_id = uuid.uuid4().hex
@@ -250,54 +308,46 @@ def _make_request_dir() -> str:
     _ensure_dir(req_dir)
     return req_dir
 
-
-def _create_download_token(file_path: str, download_name: str, owner_username: str) -> str:
+def _create_download_token(file_path: str, download_name: str, owner_username: str, ttl: int = DEFAULT_TOKEN_TTL) -> str:
     token = uuid.uuid4().hex
     tokens = _load_tokens()
-    tokens[token] = (file_path, download_name, owner_username)
+    tokens[token] = (file_path, download_name, owner_username, int(time.time()), int(ttl))
     _save_tokens(tokens)
     return token
-
 
 def _pop_download_token(token: str) -> Optional[Tuple[str, str, str]]:
     tokens = _load_tokens()
     entry = tokens.pop(token, None)
     _save_tokens(tokens)
-    return tuple(entry) if entry else None
-
+    return tuple(entry[:3]) if entry else None
 
 def _get_download_token(token: str) -> Optional[Tuple[str, str, str]]:
     tokens = _load_tokens()
     entry = tokens.get(token)
-    return tuple(entry) if entry else None
+    return tuple(entry[:3]) if entry else None
 
-
-def _create_transfer_token(file_path: str, download_name: str, owner_username: str) -> str:
+def _create_transfer_token(file_path: str, download_name: str, owner_username: str, ttl: int = DEFAULT_TOKEN_TTL) -> str:
     token = uuid.uuid4().hex
     tokens = _load_transfer_tokens()
-    tokens[token] = (file_path, download_name, owner_username)
+    tokens[token] = (file_path, download_name, owner_username, int(time.time()), int(ttl))
     _save_transfer_tokens(tokens)
     return token
-
 
 def _get_transfer_token(token: str) -> Optional[Tuple[str, str, str]]:
     tokens = _load_transfer_tokens()
     entry = tokens.get(token)
-    return tuple(entry) if entry else None
-
+    return tuple(entry[:3]) if entry else None
 
 def _pop_transfer_token(token: str) -> Optional[Tuple[str, str, str]]:
     tokens = _load_transfer_tokens()
     entry = tokens.pop(token, None)
     _save_transfer_tokens(tokens)
-    return tuple(entry) if entry else None
-
+    return tuple(entry[:3]) if entry else None
 
 def _ensure_inbox_dir(username: str) -> str:
     user_dir = os.path.join(INBOX_FOLDER, secure_filename(username or ""))
     os.makedirs(user_dir, exist_ok=True)
     return user_dir
-
 
 def encrypt_file_streaming(
     media_path: str,
@@ -317,53 +367,62 @@ def encrypt_file_streaming(
     - tag (16)
     AAD = MAGIC || salt || nonce || filename_len || filename
     """
-    raw_key = generate_raw_key_from_media(media_path)
-    salt = os.urandom(SALT_LEN)
-    enc_key = derive_enc_key(raw_key, salt, passphrase)
-    nonce = os.urandom(NONCE_LEN)
+    try:
+        raw_key = generate_raw_key_from_media(media_path)
+        salt = os.urandom(SALT_LEN)
+        enc_key = derive_enc_key(raw_key, salt, passphrase)
+        nonce = os.urandom(NONCE_LEN)
 
-    filename_bytes = original_filename.encode("utf-8")
-    if len(filename_bytes) > 65535:
-        raise ValueError("Original filename too long.")
+        filename_bytes = original_filename.encode("utf-8")
+        if len(filename_bytes) > 65535:
+            raise ValueError("Original filename too long.")
 
-    aad = b"".join([
-        MAGIC,
-        salt,
-        nonce,
-        struct.pack(FILENAME_LEN_FMT, len(filename_bytes)),
-        filename_bytes,
-    ])
+        aad = b"".join([
+            MAGIC,
+            salt,
+            nonce,
+            struct.pack(FILENAME_LEN_FMT, len(filename_bytes)),
+            filename_bytes,
+        ])
 
-    cipher = Cipher(algorithms.AES(enc_key), modes.GCM(nonce))
-    encryptor = cipher.encryptor()
-    encryptor.authenticate_additional_data(aad)
+        cipher = Cipher(algorithms.AES(enc_key), modes.GCM(nonce))
+        encryptor = cipher.encryptor()
+        encryptor.authenticate_additional_data(aad)
 
-    with open(plaintext_path, "rb") as fin, open(out_path, "wb") as fout:
-        # header
-        fout.write(MAGIC)
-        fout.write(salt)
-        fout.write(nonce)
-        fout.write(struct.pack(FILENAME_LEN_FMT, len(filename_bytes)))
-        fout.write(filename_bytes)
+        with open(plaintext_path, "rb") as fin, open(out_path, "wb") as fout:
+            # header
+            fout.write(MAGIC)
+            fout.write(salt)
+            fout.write(nonce)
+            fout.write(struct.pack(FILENAME_LEN_FMT, len(filename_bytes)))
+            fout.write(filename_bytes)
 
-        # stream encrypt
-        while True:
-            chunk = fin.read(CHUNK_SIZE)
-            if not chunk:
-                break
-            ct = encryptor.update(chunk)
-            if ct:
-                fout.write(ct)
+            # stream encrypt
+            while True:
+                chunk = fin.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                ct = encryptor.update(chunk)
+                if ct:
+                    fout.write(ct)
 
-        final_ct = encryptor.finalize()
-        if final_ct:
-            fout.write(final_ct)
+            final_ct = encryptor.finalize()
+            if final_ct:
+                fout.write(final_ct)
 
-        tag = encryptor.tag
-        if not tag or len(tag) != TAG_LEN:
-            raise ValueError("Encryption failed to produce valid authentication tag.")
-        fout.write(tag)
-
+            tag = encryptor.tag
+            if not tag or len(tag) != TAG_LEN:
+                raise ValueError("Encryption failed to produce valid authentication tag.")
+            fout.write(tag)
+    except Exception as e:
+        # Clean up any partial files
+        for path in [out_path]:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
+        raise e
 
 def decrypt_file_streaming(
     media_path: str,
@@ -417,7 +476,9 @@ def decrypt_file_streaming(
 
         safe_name = secure_filename(original_filename) or "decrypted_output"
         final_out_path = os.path.join(out_folder, safe_name)
-        tmp_out_path = os.path.join(out_folder, f".tmp_{uuid.uuid4().hex}")
+        # Use NamedTemporaryFile to avoid collisions
+        with tempfile.NamedTemporaryFile(prefix=".tmp_", dir=out_folder, delete=False) as tmpf:
+            tmp_out_path = tmpf.name
 
         bytes_remaining = ciphertext_len
         with open(tmp_out_path, "wb") as fout:
@@ -439,7 +500,7 @@ def decrypt_file_streaming(
         os.replace(tmp_out_path, final_out_path)
         return final_out_path
 
-
+# Base CSS without dynamic admin link (to avoid context issues)
 base_css = """
 <style>
   :root {
@@ -447,6 +508,15 @@ base_css = """
   }
   [data-theme="modern"] {
     --bg: #0f1318; --fg: #e6e8eb; --muted: #94a3b8; --border: #334155; --input-bg: #111827; --shadow: 0 10px 24px rgba(0,0,0,.25); --font-body: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  }
+  [data-theme="light"] {
+    --bg: #ffffff; --fg: #111827; --muted: #475569; --border: #e2e8f0; --input-bg: #ffffff; --shadow: 0 6px 16px rgba(2,6,23,.06); --font-body: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  }
+  [data-theme="retro"] {
+    --bg: #041a02; --fg: #9fff9f; --muted: #6fb76f; --border: #0f3a09; --input-bg: #021003; --shadow: 0 0 18px rgba(0,255,0,.06); --font-body: 'Courier New', monospace; --font-mono: 'Courier New', monospace;
+  }
+  [data-theme="futuristic"] {
+    --bg: #02021a; --fg: #dbeafe; --muted: #93c5fd; --border: #0b1226; --input-bg: #07102a; --shadow: 0 12px 30px rgba(59,130,246,.06); --font-body: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; --font-mono: ui-monospace;
   }
   body { background-color: var(--bg); color: var(--fg); font-family: var(--font-body); margin: 40px auto; max-width: 900px; line-height: 1.7; }
   h2,h3 { color: var(--fg); font-family: var(--font-mono); letter-spacing: .5px; }
@@ -463,62 +533,151 @@ base_css = """
   .alert-error { background: rgba(239,68,68,.1); border: 1px solid #ef444433; color: #ef4444; padding: 10px 12px; border-radius: 8px; }
   .topbar { display:flex; justify-content: space-between; align-items:center; position: sticky; top: 0; background: var(--bg); padding: 10px 0; margin-bottom: 20px; }
   .topbar .links a { margin-right: 12px; opacity:.9; }
-  .toggle { border:1px solid var(--border); background: var(--input-bg); color: var(--fg); padding:8px 12px; border-radius:8px; cursor:pointer; font-family: var(--font-mono); }
+  .theme-picker { position: relative; display:inline-block; }
+  .theme-button { border:1px solid var(--border); background: var(--input-bg); color: var(--fg); padding:8px 12px; border-radius:8px; cursor:pointer; font-family: var(--font-mono); }
+  .theme-menu { position:absolute; right:0; top:40px; background:var(--input-bg); border:1px solid var(--border); padding:8px; border-radius:8px; display:none; min-width:140px; z-index:9999; }
+  .theme-menu button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--fg); padding:8px; cursor:pointer; font-family:var(--font-mono); }
 </style>
 <div class="topbar">
   <div class="links">
     <a href="/">Encrypt</a>
     <a href="/decrypt">Decrypt</a>
     <a href="/inbox">Inbox</a>
+    <a href="/admin">Admin</a>
     <a href="/logout">Logout</a>
   </div>
-  <button class="toggle" id="themeToggle" type="button">Toggle Theme</button>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <div class="theme-picker" id="themePicker">
+      <button class="theme-button" id="themeToggle" type="button">Theme</button>
+      <div class="theme-menu" id="themeMenu">
+        <button data-theme="hacker">Hacker (default)</button>
+        <button data-theme="modern">Modern</button>
+        <button data-theme="light">Light</button>
+        <button data-theme="retro">Retro</button>
+        <button data-theme="futuristic">Futuristic</button>
+      </div>
+    </div>
+  </div>
   <script>
     (function(){
-      const key = 'theme.pref';
-      const root = document.documentElement;
-      const pref = localStorage.getItem(key) || 'hacker';
-      if (pref === 'modern') root.setAttribute('data-theme','modern');
-      document.getElementById('themeToggle').addEventListener('click', function(){
-        const next = root.getAttribute('data-theme') === 'modern' ? 'hacker' : 'modern';
-        if (next === 'modern') root.setAttribute('data-theme','modern'); else root.removeAttribute('data-theme');
-        localStorage.setItem(key, next);
+      const menu = document.getElementById('themeMenu');
+      const toggle = document.getElementById('themeToggle');
+      toggle.addEventListener('click', function(){ menu.style.display = menu.style.display === 'block' ? 'none' : 'block'; });
+      window.addEventListener('click', function(e){ if (!document.getElementById('themePicker').contains(e.target)) menu.style.display = 'none'; });
+
+      function applyTheme(name){
+        if (name && name !== 'hacker'){
+          document.documentElement.setAttribute('data-theme', name);
+        } else {
+          document.documentElement.removeAttribute('data-theme');
+        }
+      }
+
+      // Load server-saved theme
+      fetch('/get_theme').then(r => r.json()).then(j => { applyTheme(j.theme); });
+
+      // When user picks a theme, POST to server and apply immediately
+      Array.from(menu.querySelectorAll('button')).forEach(btn => {
+        btn.addEventListener('click', function(){
+          const theme = this.getAttribute('data-theme');
+          fetch('/set_theme', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ theme }) })
+            .then(r => {
+              if (r.ok) applyTheme(theme);
+              menu.style.display = 'none';
+            }).catch(()=>{ applyTheme(theme); menu.style.display = 'none'; });
+        });
       });
     })();
   </script>
 </div>
 """
 
+@app.route("/get_theme")
+def get_theme():
+    # Return current session theme (default 'hacker')
+    return jsonify({"theme": session.get("theme", "hacker")})
+
+@app.route("/set_theme", methods=["POST"])
+def set_theme():
+    try:
+        data = request.get_json(force=True)
+        theme = (data.get("theme") or "hacker")
+        # Only allow known themes
+        if theme not in {"hacker", "modern", "light", "retro", "futuristic"}:
+            theme = "hacker"
+        session["theme"] = theme
+        return ("OK", 200)
+    except Exception:
+        return ("Bad Request", 400)
+
+@app.route("/debug_admin")
+def debug_admin():
+    return f"""
+    Admin username: '{ADMIN_USERNAME}'<br>
+    Admin password: '{ADMIN_PASSWORD}'<br>
+    Test verification: {_verify_user('s4anoop', 'sanoop46')}<br>
+    Session username: {session.get('username', 'Not logged in')}<br>
+    <a href="/admin/force_login">Force admin login</a><br>
+    <a href="/login">Go to login</a>
+    """
+
+@app.route("/admin/force_login")
+def admin_force_login():
+    session["username"] = "s4sanoop"
+    return redirect("/admin")
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    err = ""
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
-        password = request.form.get("password") or ""
-        next_url = request.args.get("next") or url_for("index")
+        username = request.form["username"]
+        password = request.form["password"]
+        print(f"LOGIN ATTEMPT: username='{username}', password='{password}'")
+
+        # Check if user exists and password is correct
         if _verify_user(username, password):
             session["username"] = username
-            return redirect(next_url)
-        else:
-            err = "Invalid username or password."
+            
+            # If admin, always redirect to admin dashboard
+            if username == ADMIN_USERNAME:
+                print("ADMIN LOGIN SUCCESS - redirecting to /admin")
+                return redirect("/admin")
+            else:
+                # Regular users go to next URL or home
+                next_url = request.args.get("next", "/")
+                print(f"USER LOGIN SUCCESS - redirecting to {next_url}")
+                return redirect(next_url)
 
-    signup_link = ("<p><a href=\"/register\">Create an account</a></p>" if ALLOW_SELF_SIGNUP else "<small>Signup disabled</small>")
-    return base_css + f"""
-    <div class=\"container stack\">
-      <div class=\"card\">
+        print("LOGIN FAILED")
+        return base_css + """
+        <div class="container stack">
+          <div class="card">
+            <h3 style="color:red;">Invalid username or password</h3>
+            <p><a href="/login">Try again</a></p>
+          </div>
+        </div>
+        """
+
+    return base_css + """
+    <div class="container stack">
+      <div class="card">
         <h2>Login</h2>
-        <form method=\"POST\">
-            Username: <input type=\"text\" name=\"username\" required><br>
-            Password: <input type=\"password\" name=\"password\" required><br>
-            <input type=\"submit\" value=\"Login\">
+        <form method="POST">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <input type="submit" value="Login">
         </form>
-        {('<div class=\\"alert-error\\">' + err + '</div>') if err else ''}
-        {signup_link}
+        """ + (f'<p><a href="/register">Create account</a></p>' if ALLOW_SELF_SIGNUP else '') + """
+        <p class="muted">Contact administrator if you need access</p>
       </div>
     </div>
     """
 
+# Add a simple admin access route for testing
+@app.route("/admin/login")
+def admin_login_direct():
+    # Direct admin login for testing
+    session["username"] = "s4sanoop"
+    return redirect("/admin")
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -555,12 +714,11 @@ def register():
     </div>
     """
 
-
 @app.route("/logout")
 def logout():
     session.pop("username", None)
+    session.pop("theme", None)
     return redirect(url_for("login"))
-
 
 @app.route("/", methods=["GET", "POST"])
 @login_required
@@ -575,6 +733,21 @@ def index():
 
         if not is_allowed_entropy_file(entropy_file.filename):
             return base_css + "<p style='color:red;'>Entropy source must be a photo or video (allowed: jpg,jpeg,png,bmp,gif,mp4,avi,mov,mkv,webm).</p>"
+
+        # Check file sizes
+        entropy_file.seek(0, 2)  # Seek to end
+        entropy_size = entropy_file.tell()
+        entropy_file.seek(0)  # Reset position
+        
+        data_file.seek(0, 2)
+        data_size = data_file.tell() 
+        data_file.seek(0)
+        
+        if entropy_size > 100 * 1024 * 1024:  # 100MB limit for entropy
+            return base_css + "<p style='color:red;'>Entropy file too large (max 100MB).</p>"
+        
+        if data_size > 500 * 1024 * 1024:  # 500MB limit for data
+            return base_css + "<p style='color:red;'>Data file too large (max 500MB).</p>"
 
         req_dir = _make_request_dir()
         try:
@@ -643,7 +816,6 @@ def index():
       </div>
     </div>
     """
-
 
 @app.route("/decrypt", methods=["GET", "POST"])
 @login_required
@@ -721,7 +893,6 @@ def decrypt():
     </div>
     """
 
-
 @app.route("/send", methods=["POST"])
 @login_required
 def send_to_user():
@@ -780,7 +951,6 @@ def send_to_user():
         <p><a href="/">Back to Encryption</a></p>
     """
 
-
 @app.route("/inbox", methods=["GET"])
 @login_required
 def inbox():
@@ -809,7 +979,6 @@ def inbox():
         </div>
     """
 
-
 @app.route("/inbox/download/<name>")
 @login_required
 def inbox_download(name: str):
@@ -831,7 +1000,6 @@ def inbox_download(name: str):
         return response
 
     return send_file(file_path, as_attachment=True, download_name=safe_name)
-
 
 @app.route("/download/<token>")
 @login_required
@@ -865,16 +1033,194 @@ def download_once(token: str):
 
     return send_file(file_path, as_attachment=True, download_name=download_name)
 
+# Admin routes
+@app.route("/admin")
+def admin():
+    # Check if user is admin
+    if session.get("username") != ADMIN_USERNAME:
+        return redirect(url_for("login", next=url_for("admin")))
+    
+    users = _load_users()
+    
+    # Build users list HTML
+    users_list_html = ""
+    for u in sorted(users.keys()):
+        role = "Admin" if u == ADMIN_USERNAME else "User"
+        view_files_link = f'<a href="/admin/user/{secure_filename(u)}">View Files</a>'
+        
+        if u == ADMIN_USERNAME:
+            actions = "N/A"
+        else:
+            delete_link = f'<a href="/admin/delete_user/{secure_filename(u)}" onclick="return confirm(\'Delete user {u}?\')">Delete</a>'
+            actions = delete_link
+        
+        users_list_html += f"<tr><td>{u}</td><td>{role}</td><td>{view_files_link}</td><td>{actions}</td></tr>"
+    
+    if not users_list_html:
+        users_list_html = "<tr><td colspan='4'>No users</td></tr>"
+
+    # Add admin to the list if not in users database
+    if ADMIN_USERNAME not in users:
+        admin_row = f"<tr><td>{ADMIN_USERNAME}</td><td>Admin</td><td>N/A</td><td>N/A</td></tr>"
+        users_list_html = admin_row + users_list_html
+
+    # Show active tokens
+    tokens = _load_tokens()
+    transfer_tokens = _load_transfer_tokens()
+    
+    def token_rows(tokdict, token_type="Download"):
+        rows = ""
+        for t, v in tokdict.items():
+            try:
+                if len(v) >= 3:
+                    fp, dn, owner = v[0], v[1], v[2]
+                    rows += f"<tr><td>{t[:16]}...</td><td>{owner}</td><td>{dn}</td><td>{token_type}</td><td><a href=\"/admin/download_token/{t}\">Download</a></td></tr>"
+            except Exception:
+                continue
+        return rows or f"<tr><td colspan='5'>No {token_type.lower()} tokens</td></tr>"
+
+    tokens_html = token_rows(tokens, "Download")
+    transfer_tokens_html = token_rows(transfer_tokens, "Transfer")
+
+    return base_css + f"""
+    <div class="container stack">
+      <div class="card">
+        <h2>Admin Dashboard</h2>
+        <p>Welcome, <strong>{session.get('username')}</strong>!</p>
+        
+        <h3>User Management</h3>
+        <table style="width:100%; border-collapse:collapse; border:1px solid var(--border);">
+          <thead><tr><th>Username</th><th>Role</th><th>Files</th><th>Actions</th></tr></thead>
+          <tbody>
+            {users_list_html}
+          </tbody>
+        </table>
+        
+        <h3>Active Tokens</h3>
+        <table style="width:100%; border-collapse:collapse; border:1px solid var(--border);">
+          <thead><tr><th>Token</th><th>Owner</th><th>Filename</th><th>Type</th><th>Action</th></tr></thead>
+          <tbody>
+            {tokens_html}
+            {transfer_tokens_html}
+          </tbody>
+        </table>
+        
+        <div style="margin-top:20px;">
+          <h3>Quick Actions</h3>
+          <p>
+            <a href="/" class="card" style="display:inline-block; padding:10px; margin:5px;">Go to Encryption</a>
+            <a href="/logout" class="card" style="display:inline-block; padding:10px; margin:5px;">Logout</a>
+          </p>
+        </div>
+      </div>
+    </div>
+    """
+
+@app.route("/admin/user/<username>")
+def admin_user_files(username: str):
+    # Check if user is admin
+    if session.get("username") != ADMIN_USERNAME:
+        return redirect(url_for("login", next=url_for("admin")))
+        
+    username = secure_filename(username or "")
+    user_dir = os.path.join(INBOX_FOLDER, username)
+    files = []
+    if os.path.exists(user_dir):
+        files = [f for f in os.listdir(user_dir) if os.path.isfile(os.path.join(user_dir, f))]
+    items_html = "".join(
+        f"<li>{f} — <a href=\"/admin/inbox_download/{username}/{secure_filename(f)}\">Download</a> — <a href=\"/admin/delete_inbox_file/{username}/{secure_filename(f)}\" onclick=\"return confirm('Delete file?')\">Delete</a></li>"
+        for f in sorted(files)
+    ) or "<li>No files.</li>"
+
+    return base_css + f"""
+    <div class="container stack">
+      <div class="card">
+        <h2>Files for user: {username}</h2>
+        <ul>{items_html}</ul>
+        <p><a href="/admin">Back to Admin</a></p>
+      </div>
+    </div>
+    """
+
+@app.route("/admin/inbox_download/<username>/<name>")
+def admin_inbox_download(username: str, name: str):
+    # Check if user is admin
+    if session.get("username") != ADMIN_USERNAME:
+        return redirect(url_for("login", next=url_for("admin")))
+        
+    username = secure_filename(username or "")
+    safe_name = secure_filename(name or "")
+    file_path = os.path.join(INBOX_FOLDER, username, safe_name)
+    if not os.path.exists(file_path):
+        abort(404)
+    return send_file(file_path, as_attachment=True, download_name=safe_name)
+
+@app.route("/admin/delete_inbox_file/<username>/<name>")
+def admin_delete_inbox_file(username: str, name: str):
+    # Check if user is admin
+    if session.get("username") != ADMIN_USERNAME:
+        return redirect(url_for("login", next=url_for("admin")))
+        
+    username = secure_filename(username or "")
+    safe_name = secure_filename(name or "")
+    file_path = os.path.join(INBOX_FOLDER, username, safe_name)
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception:
+        pass
+    return redirect(url_for("admin_user_files", username=username))
+
+@app.route("/admin/delete_user/<username>")
+def admin_delete_user(username: str):
+    # Check if user is admin
+    if session.get("username") != ADMIN_USERNAME:
+        return redirect(url_for("login", next=url_for("admin")))
+        
+    username = (username or "").strip()
+    if username == ADMIN_USERNAME:
+        return base_css + "<p style='color:red;'>Cannot delete admin account.</p><p><a href='/admin'>Back</a></p>"
+    users = _load_users()
+    if username in users:
+        users.pop(username, None)
+        _save_users(users)
+    # remove inbox dir
+    user_dir = os.path.join(INBOX_FOLDER, secure_filename(username))
+    try:
+        if os.path.exists(user_dir):
+            shutil.rmtree(user_dir, ignore_errors=True)
+    except Exception:
+        pass
+    # remove tokens owned by this user
+    tokens = _load_tokens()
+    tokens = {k:v for k,v in tokens.items() if not (isinstance(v,(list,tuple)) and len(v)>=3 and v[2]==username)}
+    _save_tokens(tokens)
+    ttokens = _load_transfer_tokens()
+    ttokens = {k:v for k,v in ttokens.items() if not (isinstance(v,(list,tuple)) and len(v)>=3 and v[2]==username)}
+    _save_transfer_tokens(ttokens)
+    return redirect(url_for("admin"))
+
+@app.route("/admin/download_token/<token>")
+def admin_download_token(token: str):
+    # Check if user is admin
+    if session.get("username") != ADMIN_USERNAME:
+        return redirect(url_for("login", next=url_for("admin")))
+        
+    # Admin may download any file referenced by token (non-destructive)
+    entry = _get_download_token(token)
+    if not entry:
+        abort(404)
+    file_path, download_name, owner_username = entry
+    if not os.path.exists(file_path):
+        abort(404)
+    return send_file(file_path, as_attachment=True, download_name=download_name)
 
 # Simple health/uptime endpoint for monitoring
 @app.route("/health")
 def health():
     return "OK", 200
 
-
 if __name__ == "__main__":
-    # When testing locally, this will still run.
-    # When deployed with gunicorn or a platform, they will ignore app.run.
     import os
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
