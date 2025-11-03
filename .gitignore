@@ -4,6 +4,9 @@
 venv/
 env/
 
+# Instance/config (Flask)
+instance/
+
 # Python cache
 __pycache__/
 *.pyc
@@ -17,7 +20,7 @@ uploads/
 # Local SQLite (if ever used)
 app.db
 
-# Legacy JSON store (kept out even if unused now)
+# JSON user store (plaintext)
 users.json
 
 # Environment files
