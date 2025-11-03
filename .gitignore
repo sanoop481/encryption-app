@@ -1,6 +1,8 @@
 # Virtual environments
 .venv/
+.venv312/
 venv/
+env/
 
 # Python cache
 __pycache__/
@@ -8,42 +10,30 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Local uploads and tokens
+# Local uploads and tokens (don’t store uploaded files in git)
 uploads/
 !uploads/.gitkeep
 
-# OS/editor
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
+# Local SQLite (if ever used)
+app.db
 
-# Env files
+# Legacy JSON store (kept out even if unused now)
+users.json
+
+# Environment files
 .env
 *.env
 
 # Logs
 *.log
 
-# Compiled
+# Build artifacts
 build/
 dist/
 *.egg-info/
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
 
-# Environment files
-.env
-
-# OS files
+# OS/editor junk
 .DS_Store
 Thumbs.db
-
-# Virtual environment folder
-venv/
-env/
-
-# Uploads folder (optional — only if you don’t want uploaded files stored online)
-uploads/
+*.swp
+*.swo

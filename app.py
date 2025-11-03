@@ -10,6 +10,7 @@ from threading import Lock
 from functools import wraps
 
 from flask import Flask, request, send_file, abort, after_this_request, session, redirect, url_for, jsonify
+from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -49,6 +50,34 @@ app.config.update(
 )
 app.permanent_session_lifetime = 60 * 60 * 24  # 1 day
 
+# Database configuration (MySQL via PyMySQL or fallback to SQLite)
+_raw_db_url = os.environ.get("DATABASE_URL", "sqlite:///app.db")
+# Normalize MySQL URLs for PyMySQL
+if _raw_db_url.startswith("mysql://") and "+" not in _raw_db_url:
+    _raw_db_url = _raw_db_url.replace("mysql://", "mysql+pymysql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = _raw_db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db = SQLAlchemy(app)
+
+# Database models
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+class TokenEntry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    file_path = db.Column(db.Text, nullable=False)
+    download_name = db.Column(db.Text, nullable=False)
+    owner_username = db.Column(db.String(150), nullable=False, index=True)
+    created = db.Column(db.Integer, nullable=False, default=lambda: int(time.time()))
+    ttl = db.Column(db.Integer, nullable=False, default=0)  # 0 = no expiry
+    kind = db.Column(db.String(16), nullable=False, index=True)  # 'download' or 'transfer'
+
+with app.app_context():
+    db.create_all()
+
 # Simple user storage (JSON file with hashed passwords)
 USERS_DB_PATH = os.environ.get("USERS_DB_PATH", os.path.join(os.path.dirname(__file__), "users.json"))
 USERS_LOCK = Lock()
@@ -87,68 +116,146 @@ def _purge_expired(tokens: dict) -> dict:
     return out
 
 def _load_tokens() -> dict:
-    with _TOKENS_LOCK:
-        if not os.path.exists(TOKENS_DB_PATH):
-            return {}
-        try:
-            with open(TOKENS_DB_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    return {}
-                data = _purge_expired(data)
-                return data
-        except Exception:
-            return {}
+    items = {}
+    with app.app_context():
+        for t in TokenEntry.query.filter_by(kind="download").all():
+            items[t.token] = (t.file_path, t.download_name, t.owner_username, int(t.created or 0), int(t.ttl or 0))
+    return _purge_expired(items)
 
 def _save_tokens(tokens: dict) -> None:
-    with _TOKENS_LOCK:
-        tokens = _purge_expired(tokens)
-        os.makedirs(os.path.dirname(TOKENS_DB_PATH), exist_ok=True)
-        tmp_path = TOKENS_DB_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(tokens, f)
-        os.replace(tmp_path, TOKENS_DB_PATH)
+    tokens = _purge_expired(tokens)
+    with app.app_context():
+        TokenEntry.query.filter_by(kind="download").delete()
+        for tok, val in tokens.items():
+            if isinstance(val, (list, tuple)) and len(val) >= 3:
+                file_path, download_name, owner_username = val[:3]
+                created = int(val[3]) if len(val) >= 4 else int(time.time())
+                ttl = int(val[4]) if len(val) >= 5 else 0
+                db.session.add(TokenEntry(
+                    token=tok,
+                    file_path=file_path,
+                    download_name=download_name,
+                    owner_username=owner_username,
+                    created=created,
+                    ttl=ttl,
+                    kind="download",
+                ))
+        db.session.commit()
 
 def _load_transfer_tokens() -> dict:
-    with _TOKENS_LOCK:
-        if not os.path.exists(TOKENS_SEND_DB_PATH):
-            return {}
-        try:
-            with open(TOKENS_SEND_DB_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    return {}
-                data = _purge_expired(data)
-                return data
-        except Exception:
-            return {}
+    items = {}
+    with app.app_context():
+        for t in TokenEntry.query.filter_by(kind="transfer").all():
+            items[t.token] = (t.file_path, t.download_name, t.owner_username, int(t.created or 0), int(t.ttl or 0))
+    return _purge_expired(items)
 
 def _save_transfer_tokens(tokens: dict) -> None:
-    with _TOKENS_LOCK:
-        tokens = _purge_expired(tokens)
-        os.makedirs(os.path.dirname(TOKENS_SEND_DB_PATH), exist_ok=True)
-        tmp_path = TOKENS_SEND_DB_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(tokens, f)
-        os.replace(tmp_path, TOKENS_SEND_DB_PATH)
+    tokens = _purge_expired(tokens)
+    with app.app_context():
+        TokenEntry.query.filter_by(kind="transfer").delete()
+        for tok, val in tokens.items():
+            if isinstance(val, (list, tuple)) and len(val) >= 3:
+                file_path, download_name, owner_username = val[:3]
+                created = int(val[3]) if len(val) >= 4 else int(time.time())
+                ttl = int(val[4]) if len(val) >= 5 else 0
+                db.session.add(TokenEntry(
+                    token=tok,
+                    file_path=file_path,
+                    download_name=download_name,
+                    owner_username=owner_username,
+                    created=created,
+                    ttl=ttl,
+                    kind="transfer",
+                ))
+        db.session.commit()
+
+def _maybe_import_from_json() -> None:
+    try:
+        with app.app_context():
+            # Import users if table empty and JSON exists
+            has_user = db.session.execute(db.select(User).limit(1)).first() is not None
+            if (not has_user) and os.path.exists(USERS_DB_PATH):
+                try:
+                    with open(USERS_DB_PATH, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            for username, ph in data.items():
+                                if username != ADMIN_USERNAME:
+                                    db.session.add(User(username=username, password_hash=ph))
+                            db.session.commit()
+                except Exception:
+                    pass
+
+            # Import tokens if table empty and JSON exists
+            has_token = db.session.execute(db.select(TokenEntry).limit(1)).first() is not None
+            if (not has_token) and os.path.exists(TOKENS_DB_PATH):
+                try:
+                    with open(TOKENS_DB_PATH, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            for tok, val in data.items():
+                                if isinstance(val, (list, tuple)) and len(val) >= 3:
+                                    file_path, download_name, owner_username = val[:3]
+                                    created = int(val[3]) if len(val) >= 4 else int(time.time())
+                                    ttl = int(val[4]) if len(val) >= 5 else 0
+                                    db.session.add(TokenEntry(
+                                        token=tok,
+                                        file_path=file_path,
+                                        download_name=download_name,
+                                        owner_username=owner_username,
+                                        created=created,
+                                        ttl=ttl,
+                                        kind="download",
+                                    ))
+                            db.session.commit()
+                except Exception:
+                    pass
+
+            if (not has_token) and os.path.exists(TOKENS_SEND_DB_PATH):
+                try:
+                    with open(TOKENS_SEND_DB_PATH, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            for tok, val in data.items():
+                                if isinstance(val, (list, tuple)) and len(val) >= 3:
+                                    file_path, download_name, owner_username = val[:3]
+                                    created = int(val[3]) if len(val) >= 4 else int(time.time())
+                                    ttl = int(val[4]) if len(val) >= 5 else 0
+                                    db.session.add(TokenEntry(
+                                        token=tok,
+                                        file_path=file_path,
+                                        download_name=download_name,
+                                        owner_username=owner_username,
+                                        created=created,
+                                        ttl=ttl,
+                                        kind="transfer",
+                                    ))
+                            db.session.commit()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+_maybe_import_from_json()
 
 def _load_users() -> dict:
-    with USERS_LOCK:
-        if not os.path.exists(USERS_DB_PATH):
-            return {}
-        try:
-            with open(USERS_DB_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+    out = {}
+    with app.app_context():
+        for u in User.query.all():
+            if u.username != ADMIN_USERNAME:
+                out[u.username] = u.password_hash
+    return out
 
 def _save_users(users: dict) -> None:
-    with USERS_LOCK:
-        tmp_path = USERS_DB_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(users, f)
-        os.replace(tmp_path, USERS_DB_PATH)
+    with app.app_context():
+        for u in User.query.all():
+            if u.username != ADMIN_USERNAME:
+                db.session.delete(u)
+        for username, ph in (users or {}).items():
+            if username == ADMIN_USERNAME:
+                continue
+            db.session.add(User(username=username, password_hash=ph))
+        db.session.commit()
 
 def _add_user(username: str, password: str) -> None:
     username = (username or "").strip()
@@ -158,11 +265,13 @@ def _add_user(username: str, password: str) -> None:
         raise ValueError("Username must be at least 3 characters.")
     if not password or len(password) < 8:
         raise ValueError("Password must be at least 8 characters.")
-    users = _load_users()
-    if username in users:
-        raise ValueError("Username already exists.")
-    users[username] = generate_password_hash(password)
-    _save_users(users)
+    with app.app_context():
+        exists = db.session.execute(db.select(User).filter_by(username=username)).scalar_one_or_none()
+        if exists:
+            raise ValueError("Username already exists.")
+        # Store password in plaintext per user request (not recommended for security)
+        db.session.add(User(username=username, password_hash=password))
+        db.session.commit()
 
 def _verify_user(username: str, password: str) -> bool:
     username = (username or "").strip()
@@ -176,9 +285,11 @@ def _verify_user(username: str, password: str) -> bool:
         print(f"DEBUG: Password match: {password == ADMIN_PASSWORD}")
         return password == ADMIN_PASSWORD
         
-    users = _load_users()
-    ph = users.get(username or "")
-    result = bool(ph and check_password_hash(ph, password or ""))
+    with app.app_context():
+        user = db.session.execute(db.select(User).filter_by(username=username)).scalar_one_or_none()
+        ph = user.password_hash if user else None
+    # Compare plaintext per user request
+    result = bool(ph is not None and (ph == (password or "")))
     print(f"DEBUG: Regular user check result: {result}")
     return result
 
@@ -186,8 +297,9 @@ def _user_exists(username: str) -> bool:
     if (username or "").strip() == ADMIN_USERNAME:
         # admin is considered an existing account for auth purposes
         return True
-    users = _load_users()
-    return (username or "") in users
+    with app.app_context():
+        user = db.session.execute(db.select(User).filter_by(username=(username or "").strip())).scalar_one_or_none()
+        return user is not None
 
 def login_required(fn):
     @wraps(fn)
@@ -310,39 +422,79 @@ def _make_request_dir() -> str:
 
 def _create_download_token(file_path: str, download_name: str, owner_username: str, ttl: int = DEFAULT_TOKEN_TTL) -> str:
     token = uuid.uuid4().hex
-    tokens = _load_tokens()
-    tokens[token] = (file_path, download_name, owner_username, int(time.time()), int(ttl))
-    _save_tokens(tokens)
+    with app.app_context():
+        db.session.add(TokenEntry(
+            token=token,
+            file_path=file_path,
+            download_name=download_name,
+            owner_username=owner_username,
+            created=int(time.time()),
+            ttl=int(ttl),
+            kind="download",
+        ))
+        db.session.commit()
     return token
 
 def _pop_download_token(token: str) -> Optional[Tuple[str, str, str]]:
-    tokens = _load_tokens()
-    entry = tokens.pop(token, None)
-    _save_tokens(tokens)
-    return tuple(entry[:3]) if entry else None
+    with app.app_context():
+        t = db.session.execute(db.select(TokenEntry).filter_by(token=token, kind="download")).scalar_one_or_none()
+        if not t:
+            return None
+        if int(t.ttl or 0) != 0 and (int(t.created or 0) + int(t.ttl or 0)) <= int(time.time()):
+            db.session.delete(t)
+            db.session.commit()
+            return None
+        result = (t.file_path, t.download_name, t.owner_username)
+        db.session.delete(t)
+        db.session.commit()
+        return result
 
 def _get_download_token(token: str) -> Optional[Tuple[str, str, str]]:
-    tokens = _load_tokens()
-    entry = tokens.get(token)
-    return tuple(entry[:3]) if entry else None
+    with app.app_context():
+        t = db.session.execute(db.select(TokenEntry).filter_by(token=token, kind="download")).scalar_one_or_none()
+        if not t:
+            return None
+        if int(t.ttl or 0) != 0 and (int(t.created or 0) + int(t.ttl or 0)) <= int(time.time()):
+            return None
+        return (t.file_path, t.download_name, t.owner_username)
 
 def _create_transfer_token(file_path: str, download_name: str, owner_username: str, ttl: int = DEFAULT_TOKEN_TTL) -> str:
     token = uuid.uuid4().hex
-    tokens = _load_transfer_tokens()
-    tokens[token] = (file_path, download_name, owner_username, int(time.time()), int(ttl))
-    _save_transfer_tokens(tokens)
+    with app.app_context():
+        db.session.add(TokenEntry(
+            token=token,
+            file_path=file_path,
+            download_name=download_name,
+            owner_username=owner_username,
+            created=int(time.time()),
+            ttl=int(ttl),
+            kind="transfer",
+        ))
+        db.session.commit()
     return token
 
 def _get_transfer_token(token: str) -> Optional[Tuple[str, str, str]]:
-    tokens = _load_transfer_tokens()
-    entry = tokens.get(token)
-    return tuple(entry[:3]) if entry else None
+    with app.app_context():
+        t = db.session.execute(db.select(TokenEntry).filter_by(token=token, kind="transfer")).scalar_one_or_none()
+        if not t:
+            return None
+        if int(t.ttl or 0) != 0 and (int(t.created or 0) + int(t.ttl or 0)) <= int(time.time()):
+            return None
+        return (t.file_path, t.download_name, t.owner_username)
 
 def _pop_transfer_token(token: str) -> Optional[Tuple[str, str, str]]:
-    tokens = _load_transfer_tokens()
-    entry = tokens.pop(token, None)
-    _save_transfer_tokens(tokens)
-    return tuple(entry[:3]) if entry else None
+    with app.app_context():
+        t = db.session.execute(db.select(TokenEntry).filter_by(token=token, kind="transfer")).scalar_one_or_none()
+        if not t:
+            return None
+        if int(t.ttl or 0) != 0 and (int(t.created or 0) + int(t.ttl or 0)) <= int(time.time()):
+            db.session.delete(t)
+            db.session.commit()
+            return None
+        result = (t.file_path, t.download_name, t.owner_username)
+        db.session.delete(t)
+        db.session.commit()
+        return result
 
 def _ensure_inbox_dir(username: str) -> str:
     user_dir = os.path.join(INBOX_FOLDER, secure_filename(username or ""))
