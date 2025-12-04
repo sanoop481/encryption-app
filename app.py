@@ -306,12 +306,12 @@ def _verify_user(username: str, password: str) -> bool:
     if not isinstance(ph, str):
         return False
 
-    # Prefer secure hash verification
+    # Try secure hash verification first (supports any Werkzeug scheme).
     try:
-        if ph.startswith("pbkdf2:"):
-            return check_password_hash(ph, password)
+        if check_password_hash(ph, password):
+            return True
     except Exception:
-        # Fall back to plaintext comparison below
+        # If the stored value isn't a valid hash, fall back below.
         pass
 
     # Backward compatibility: if a plaintext password ever slipped through,
