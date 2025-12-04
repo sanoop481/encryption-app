@@ -152,10 +152,10 @@ TOKENS_SEND_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens_send.json")
 
 DEFAULT_TOKEN_TTL = 60 * 60 * 24  # 24 hours
 
-# Admin credentials - environment ONLY, no defaults. Application must fail if not set.
-# Strip whitespace to avoid subtle config errors.
-ADMIN_USERNAME = os.environ["ADMIN_USERNAME"].strip()
-ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"].strip()
+# Admin credentials (fully hard-coded, no environment variables involved).
+# Change these here in the code if you want different admin credentials.
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "sanoop46"
 
 def _purge_expired(tokens: dict) -> dict:
     now = int(time.time())
@@ -223,6 +223,12 @@ def _save_transfer_tokens(tokens: dict) -> None:
 # (Removed DB import; JSON files remain the single source of truth)
 
 def _load_users() -> dict:
+    """
+    Load users from JSON without modifying the file on disk.
+    - Usernames are normalized to lowercase keys.
+    - Stored password values are left exactly as-is (no auto-hashing/migration).
+    This keeps existing plaintext or hashed entries untouched.
+    """
     with USERS_LOCK:
         if not os.path.exists(USERS_DB_PATH):
             return {}
@@ -235,37 +241,22 @@ def _load_users() -> dict:
         if not isinstance(raw, dict):
             return {}
 
-        # Normalize usernames to lowercase and ensure passwords are hashed.
-        changed = False
         users: dict = {}
         for raw_username, value in raw.items():
             if not isinstance(raw_username, str):
-                changed = True
                 continue
             username = raw_username.strip()
             if not username:
-                changed = True
                 continue
             key = username.lower()
             if key in users:
                 # Drop duplicates ignoring case
-                changed = True
                 continue
-            ph = value
-            if isinstance(ph, str):
-                # Detect plaintext vs werkzeug-style password hash
-                if not ph.startswith("pbkdf2:"):
-                    ph = generate_password_hash(ph)
-                    changed = True
-            else:
-                changed = True
+            # Keep stored password value unchanged (plaintext or hash)
+            if not isinstance(value, str):
                 continue
-            if key != raw_username or ph != value:
-                changed = True
-            users[key] = ph
+            users[key] = value
 
-        if changed:
-            _save_users(users)
         return users
 
 def _save_users(users: dict) -> None:
@@ -351,49 +342,45 @@ def is_allowed_entropy_file(filename: str) -> bool:
 
 def validate_entropy_source(media_path: str) -> dict:
     """
-    Validate entropy source and return statistics.
+    Collect basic stats about the entropy source without enforcing strict validation.
+    This no longer blocks encryption based on file size or entropy estimates.
     Returns dict with: size_bytes, entropy_estimate, frame_count (if video), validation_passed
     """
     file_size = os.path.getsize(media_path)
-    if file_size < MIN_ENTROPY_BYTES:
-        raise ValueError(f"Entropy source too small ({file_size} bytes). Minimum {MIN_ENTROPY_BYTES} bytes required.")
-    
+
     ext = os.path.splitext(media_path.lower())[1]
     vid_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-    
+
     result = {
         "size_bytes": file_size,
         "entropy_estimate": None,
         "frame_count": None,
-        "validation_passed": True
+        "validation_passed": True,
     }
-    
-    # For videos, try to get frame count
+
+    # For videos, try to get frame count (best-effort)
     if ext in vid_exts:
         try:
             cap = cv2.VideoCapture(media_path)
             if cap.isOpened():
                 frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
                 result["frame_count"] = frame_count
-                cap.release()
+            cap.release()
         except Exception:
             pass
-    
-    # Simple entropy estimate: check for repeated patterns (basic test)
+
+    # Simple entropy estimate (for info only, no rejection)
     try:
         with open(media_path, "rb") as f:
             sample = f.read(min(8192, file_size))
             if len(sample) > 0:
-                # Count unique bytes
                 unique_bytes = len(set(sample))
                 entropy_estimate = unique_bytes / 256.0  # Normalized 0-1
                 result["entropy_estimate"] = entropy_estimate
-                # Reject extremely low-entropy sources
-                if entropy_estimate < 0.30:
-                    raise ValueError("Entropy source appears too low-entropy. Please use a more complex photo or video.")
     except Exception:
-        raise
-    
+        # If anything goes wrong, just return what we have
+        pass
+
     return result
 
 def _hash_file_bytes(media_path: str) -> bytes:
