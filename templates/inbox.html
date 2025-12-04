@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Inbox</h2>
+    <ul>
+      {% if files %}
+        {% for f in files %}
+          <li>{{ f }} — <a href="{{ url_for('inbox_download', name=f) }}">Download</a></li>
+        {% endfor %}
+      {% else %}
+        <li>No messages.</li>
+      {% endif %}
+    </ul>
+    <p><a href="{{ url_for('index') }}">Back to Encryption</a></p>
+  </div>
+{% endblock %}
+
+

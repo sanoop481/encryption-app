@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Login</h2>
+    {% if error %}
+      <div class="alert-error">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+      <input type="text" name="username" placeholder="Username" required>
+      <input type="password" name="password" placeholder="Password" required>
+      <input type="submit" value="Login">
+    </form>
+    {% if allow_signup %}
+      <p><a href="{{ url_for('register') }}">Create account</a></p>
+    {% endif %}
+    <p class="muted">Contact administrator if you need access</p>
+  </div>
+{% endblock %}
+
+

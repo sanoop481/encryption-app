@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h3>Encryption completed!</h3>
+    {% if entropy_info %}
+      <div class="alert-success" style="margin: 16px 0;">
+        <strong>Encryption Security Report:</strong><br>
+        • Entropy source size: {{ entropy_info.size_bytes or "N/A" }} bytes<br>
+        • Entropy estimate: {{ "%.2f"|format((entropy_info.entropy_estimate or 0.0) * 100) }}% (unique byte distribution)<br>
+        {% if entropy_info.frame_count %}
+          • Video frames detected: {{ entropy_info.frame_count }}<br>
+        {% endif %}
+        • Format version: {{ format_version }}<br>
+        • Bytes encrypted: {{ bytes_encrypted or "N/A" }}
+      </div>
+    {% endif %}
+    <p><a href="{{ url_for('download_once', token=download_token) }}">Download Encrypted File</a></p>
+    <p class="muted"><strong>Keep the original photo/video and passphrase (if used) safe.</strong> You will need the same to decrypt.</p>
+    <p><a href="{{ url_for('decrypt') }}">Go to Decryption Page</a></p>
+    <small class="muted">Note: download link is one-time. The file is deleted after download.</small>
+    <hr>
+    <h3>Send Encrypted File to a User</h3>
+    <form method="POST" action="{{ url_for('send_to_user') }}">
+      <input type="hidden" name="token" value="{{ send_token }}">
+      Recipient Username: <input type="text" name="recipient" required><br>
+      <input type="submit" value="Send to User">
+    </form>
+    <p><a href="{{ url_for('inbox') }}">Go to Inbox</a></p>
+  </div>
+{% endblock %}
+
+

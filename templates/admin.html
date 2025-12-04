@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Admin Dashboard</h2>
+    <p>Welcome, <strong>{{ current_user }}</strong>!</p>
+    {% if error %}
+      <div class="alert-error">{{ error }}</div>
+    {% endif %}
+
+    <h3>User Management</h3>
+    <table style="width:100%; border-collapse:collapse; border:1px solid var(--border);">
+      <thead>
+        <tr><th>Username</th><th>Role</th><th>Files</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {% if users %}
+          {% for row in users %}
+            <tr>
+              <td>{{ row.username }}</td>
+              <td>{{ row.role }}</td>
+              <td>
+                {% if row.can_view_files %}
+                  <a href="{{ url_for('admin_user_files', username=row.username_safe) }}">View Files</a>
+                {% else %}
+                  N/A
+                {% endif %}
+              </td>
+              <td>
+                {% if row.can_delete %}
+                  <a href="{{ url_for('admin_delete_user', username=row.username_safe) }}"
+                     onclick="return confirm('Delete user {{ row.username }}?')">Delete</a>
+                {% else %}
+                  N/A
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="4">No users</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <h3>Active Tokens</h3>
+    <table style="width:100%; border-collapse:collapse; border:1px solid var(--border);">
+      <thead>
+        <tr><th>Token</th><th>Owner</th><th>Filename</th><th>Type</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        {% if tokens %}
+          {% for t in tokens %}
+            <tr>
+              <td>{{ t.prefix }}...</td>
+              <td>{{ t.owner }}</td>
+              <td>{{ t.filename }}</td>
+              <td>{{ t.type }}</td>
+              <td><a href="{{ url_for('admin_download_token', token=t.token) }}">Download</a></td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="5">No tokens</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <div style="margin-top:20px;">
+      <h3>Quick Actions</h3>
+      <p>
+        <a href="{{ url_for('index') }}" class="card" style="display:inline-block; padding:10px; margin:5px;">Go to Encryption</a>
+        <a href="{{ url_for('logout') }}" class="card" style="display:inline-block; padding:10px; margin:5px;">Logout</a>
+      </p>
+    </div>
+  </div>
+{% endblock %}
+
+

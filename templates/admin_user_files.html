@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Files for user: {{ username }}</h2>
+    <ul>
+      {% if files %}
+        {% for f in files %}
+          <li>
+            {{ f }} —
+            <a href="{{ url_for('admin_inbox_download', username=username, name=f) }}">Download</a> —
+            <a href="{{ url_for('admin_delete_inbox_file', username=username, name=f) }}"
+               onclick="return confirm('Delete file?')">Delete</a>
+          </li>
+        {% endfor %}
+      {% else %}
+        <li>No files.</li>
+      {% endif %}
+    </ul>
+    <p><a href="{{ url_for('admin') }}">Back to Admin</a></p>
+  </div>
+{% endblock %}
+
+

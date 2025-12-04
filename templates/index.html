@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Encrypt Any File — Entropy must be Image or Video</h2>
+    {% if error %}
+      <div class="alert-error">{{ error }}</div>
+    {% endif %}
+    {% if message %}
+      <div class="alert-success">{{ message }}</div>
+    {% endif %}
+    <form method="POST" enctype="multipart/form-data">
+      Photo or Video (used as entropy source):
+      <input type="file" name="entropy" accept="image/*,video/*" required><br>
+      Optional passphrase (recommended):
+      <input type="password" name="passphrase" placeholder="Leave empty to skip"><br>
+      File to encrypt:
+      <input type="file" name="data_file" required><br>
+      <input type="submit" value="Encrypt">
+    </form>
+    <p><a href="{{ url_for('decrypt') }}">Go to Decryption Page</a> · <a href="{{ url_for('inbox') }}">Inbox</a></p>
+  </div>
+{% endblock %}
+
+

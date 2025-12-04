@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h3>Decryption successful!</h3>
+    <p><a href="{{ url_for('download_once', token=download_token) }}">Download Decrypted File</a></p>
+    <p><a href="{{ url_for('index') }}">Back to Encryption</a></p>
+    <small class="muted">Note: download link is one-time. The file is deleted after download.</small>
+  </div>
+{% endblock %}
+
+

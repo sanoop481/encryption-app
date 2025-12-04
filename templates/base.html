@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ title or "Encryption App" }}</title>
+    {{ base_css|safe }}
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="links">
+          <a href="{{ url_for('index') }}">Encrypt</a>
+          <a href="{{ url_for('decrypt') }}">Decrypt</a>
+          <a href="{{ url_for('inbox') }}">Inbox</a>
+          <a href="{{ url_for('admin') }}">Admin</a>
+          <a href="{{ url_for('logout') }}">Logout</a>
+        </div>
+        <div class="theme-picker" id="themePicker">
+          <button class="theme-button" id="themeToggle" type="button">
+            Theme
+          </button>
+          <div class="theme-menu" id="themeMenu">
+            <button data-theme="hacker">Hacker</button>
+            <button data-theme="modern">Modern</button>
+            <button data-theme="light">Light</button>
+            <button data-theme="retro">Retro</button>
+            <button data-theme="futuristic">Futuristic</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container stack">
+      {% block content %}{% endblock %}
+    </div>
+  </body>
+</html>
+
+
