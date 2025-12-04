@@ -849,10 +849,10 @@ base_css = """
     --bg: radial-gradient(circle at top left, #f9fafb 0, #e5e7eb 60%, #d1d5db 100%);
     --surface: rgba(255,255,255,0.92);
     --surface-soft: rgba(255,255,255,0.85);
-    --fg: #020617;
-    --muted: #6b7280;
-    --border: rgba(203,213,225,0.9);
-    --input-bg: rgba(248,250,252,0.95);
+    --fg: #0f172a;
+    --muted: #475569;
+    --border: rgba(148,163,184,0.9);
+    --input-bg: rgba(15,23,42,0.04);
   }
   [data-theme="retro"] {
     --bg: radial-gradient(circle at top left, #052e16 0, #022c22 55%, #020617 100%);
@@ -865,6 +865,30 @@ base_css = """
     --accent: #38bdf8;
     --accent-soft: rgba(56,189,248,0.14);
     --accent-strong: #a855f7;
+  }
+  [data-theme="instagram"] {
+    --bg: radial-gradient(circle at top left, #f97316 0, #ec4899 40%, #6366f1 80%);
+    --surface: rgba(24,24,37,0.94);
+    --surface-soft: rgba(24,24,37,0.85);
+    --fg: #f9fafb;
+    --muted: #e5e7eb;
+    --border: rgba(251,191,36,0.8);
+    --accent: #ec4899;
+    --accent-soft: rgba(236,72,153,0.2);
+    --accent-strong: #facc15;
+    --input-bg: rgba(15,23,42,0.9);
+  }
+  [data-theme="facebook"] {
+    --bg: radial-gradient(circle at top left, #1d4ed8 0, #1e3a8a 45%, #020617 100%);
+    --surface: rgba(15,23,42,0.96);
+    --surface-soft: rgba(15,23,42,0.9);
+    --fg: #e5e7eb;
+    --muted: #cbd5f5;
+    --border: rgba(59,130,246,0.8);
+    --accent: #2563eb;
+    --accent-soft: rgba(37,99,235,0.3);
+    --accent-strong: #60a5fa;
+    --input-bg: rgba(15,23,42,0.9);
   }
   *,
   *::before,
@@ -1180,7 +1204,7 @@ def set_theme():
         data = request.get_json(force=True)
         theme = (data.get("theme") or "hacker")
         # Only allow known themes
-        if theme not in {"hacker", "modern", "light", "retro", "futuristic"}:
+        if theme not in {"hacker", "modern", "light", "retro", "futuristic", "instagram", "facebook"}:
             theme = "hacker"
         session["theme"] = theme
         return ("OK", 200)
