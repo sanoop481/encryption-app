@@ -824,18 +824,19 @@ def decrypt_file_streaming(
 base_css = """
 <style>
   :root {
-    --bg: radial-gradient(circle at top left, #0f172a 0, #020617 55%, #000 100%);
-    --surface: rgba(15,23,42,0.9);
-    --surface-soft: rgba(15,23,42,0.7);
-    --fg: #e5e7eb;
-    --muted: #9ca3af;
-    --border: rgba(148,163,184,0.35);
-    --accent: #6366f1;
-    --accent-soft: rgba(99,102,241,0.15);
-    --accent-strong: #a855f7;
-    --input-bg: rgba(15,23,42,0.85);
-    --shadow-soft: 0 18px 45px rgba(15,23,42,0.75);
-    --shadow-chip: 0 0 0 1px rgba(148,163,184,0.5);
+    /* Default "hacker" / matrix-style theme */
+    --bg: radial-gradient(circle at top left, #020617 0, #020617 55%, #000 100%);
+    --surface: rgba(6,12,20,0.96);
+    --surface-soft: rgba(6,12,20,0.85);
+    --fg: #e5fce4;
+    --muted: #6ee7b7;
+    --border: rgba(34,197,94,0.5);
+    --accent: #22c55e;
+    --accent-soft: rgba(34,197,94,0.18);
+    --accent-strong: #4ade80;
+    --input-bg: rgba(6,12,20,0.95);
+    --shadow-soft: 0 18px 45px rgba(0,0,0,0.9);
+    --shadow-chip: 0 0 0 1px rgba(34,197,94,0.6);
     --radius-lg: 18px;
     --radius-md: 12px;
     --radius-full: 999px;
@@ -849,8 +850,8 @@ base_css = """
     --bg: radial-gradient(circle at top left, #f9fafb 0, #e5e7eb 60%, #d1d5db 100%);
     --surface: rgba(255,255,255,0.92);
     --surface-soft: rgba(255,255,255,0.85);
-    --fg: #0f172a;
-    --muted: #475569;
+    --fg: #ffffff;
+    --muted: #e5e7eb;
     --border: rgba(148,163,184,0.9);
     --input-bg: rgba(15,23,42,0.04);
   }
@@ -890,6 +891,30 @@ base_css = """
     --accent-strong: #60a5fa;
     --input-bg: rgba(15,23,42,0.9);
   }
+  [data-theme="ocean"] {
+    --bg: radial-gradient(circle at top left, #0ea5e9 0, #0f172a 55%, #020617 100%);
+    --surface: rgba(15,23,42,0.95);
+    --surface-soft: rgba(15,23,42,0.9);
+    --fg: #e0f2fe;
+    --muted: #bae6fd;
+    --border: rgba(59,130,246,0.7);
+    --accent: #38bdf8;
+    --accent-soft: rgba(56,189,248,0.25);
+    --accent-strong: #0ea5e9;
+    --input-bg: rgba(15,23,42,0.9);
+  }
+  [data-theme="sunset"] {
+    --bg: radial-gradient(circle at top left, #fb923c 0, #ec4899 40%, #1e293b 100%);
+    --surface: rgba(15,23,42,0.95);
+    --surface-soft: rgba(15,23,42,0.9);
+    --fg: #fff7ed;
+    --muted: #fed7aa;
+    --border: rgba(248,113,113,0.7);
+    --accent: #f97316;
+    --accent-soft: rgba(249,115,22,0.22);
+    --accent-strong: #fb7185;
+    --input-bg: rgba(15,23,42,0.9);
+  }
   *,
   *::before,
   *::after {
@@ -909,6 +934,26 @@ base_css = """
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
+  }
+  /* Matrix-style animated background for default hacker theme only
+     (applies when no explicit data-theme is set). */
+  html:not([data-theme]) body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to bottom, rgba(34,197,94,0.18) 0, transparent 60%),
+      linear-gradient(#020617 1px, transparent 1px);
+    background-size: 3px 220px, 100% 22px;
+    mix-blend-mode: screen;
+    opacity: 0.7;
+    animation: matrix-rain 18s linear infinite;
+    z-index: -1;
+  }
+  @keyframes matrix-rain {
+    0% { background-position: 0 -100%, 0 0; }
+    100% { background-position: 0 100%, 0 0; }
   }
   .container {
     width: 100%;
@@ -1204,7 +1249,7 @@ def set_theme():
         data = request.get_json(force=True)
         theme = (data.get("theme") or "hacker")
         # Only allow known themes
-        if theme not in {"hacker", "modern", "light", "retro", "futuristic", "instagram", "facebook"}:
+        if theme not in {"hacker", "modern", "light", "retro", "futuristic", "instagram", "facebook", "ocean", "sunset"}:
             theme = "hacker"
         session["theme"] = theme
         return ("OK", 200)
