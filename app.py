@@ -1121,19 +1121,49 @@ base_css = """
   .theme-menu button:hover {
     background: rgba(15,23,42,0.9);
   }
+  /* Simple responsive table wrapper for admin pages */
+  .table-scroll {
+    width: 100%;
+    overflow-x: auto;
+  }
+  .table-scroll table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 600px;
+  }
   @media (max-width: 640px) {
+    .container {
+      padding: 56px 14px 28px;
+    }
     .topbar-inner {
-      padding-inline: 10px;
+      padding-inline: 8px;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
     }
     .topbar .links {
-      gap: 6px;
+      flex-wrap: wrap;
+      gap: 4px;
     }
     .topbar .links a {
       padding-inline: 8px;
       font-size: 0.78rem;
     }
     .card {
-      padding-inline: 18px;
+      padding: 18px 14px;
+    }
+    h2 {
+      font-size: 1.2rem;
+    }
+    h3 {
+      font-size: 1rem;
+    }
+    form {
+      padding: 14px 12px 12px;
+    }
+    input[type="submit"] {
+      font-size: 0.8rem;
+      padding: 10px 12px;
     }
   }
 </style>
