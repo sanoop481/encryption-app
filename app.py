@@ -1181,7 +1181,10 @@ def login():
 
         # Check if user exists and password is correct
         if _verify_user(username, password):
+            # Reset session to avoid fixation and ensure fresh data
+            session.clear()
             session["username"] = username.lower()
+            session.permanent = True
             logger.info("User '%s' logged in successfully", username.lower())
 
             # If admin, always redirect to admin dashboard
@@ -1193,9 +1196,14 @@ def login():
                 return redirect(next_url)
 
         logger.warning("Failed login attempt for user '%s' from %s", username, ip)
-        return render_template("login.html", base_css=base_css, allow_signup=ALLOW_SELF_SIGNUP), 401
+        return render_template(
+            "login.html",
+            base_css=base_css,
+            allow_signup=ALLOW_SELF_SIGNUP,
+            error="Invalid username or password.",
+        ), 401
 
-    return render_template("login.html", base_css=base_css, allow_signup=ALLOW_SELF_SIGNUP)
+    return render_template("login.html", base_css=base_css, allow_signup=ALLOW_SELF_SIGNUP, error=None)
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
