@@ -72,9 +72,12 @@ TAG_LEN = 16    # GCM tag length (128-bit)
 FILENAME_LEN_FMT = "!H"  # 2-byte unsigned big-endian
 MIN_ENTROPY_BYTES = 1024  # Minimum file size for entropy source validation
 
-# Allowed entropy types by extension
+# Allowed entropy types by extension (common image & video formats only)
 ALLOWED_ENTROPY_EXTS = {
-    ".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".webm", ".gif"
+    # Images
+    ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".jfif",
+    # Videos
+    ".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".mpeg", ".mpg",
 }
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
@@ -337,6 +340,9 @@ def admin_required(fn):
     return wrapper
 
 def is_allowed_entropy_file(filename: str) -> bool:
+    """
+    Only allow certain image and video extensions to be used as entropy sources.
+    """
     ext = os.path.splitext(filename or "")[1].lower()
     return ext in ALLOWED_ENTROPY_EXTS
 
@@ -465,6 +471,7 @@ def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> 
         except Exception:
             return _hash_file_bytes(media_path)
 
+    # For any other extension, treat as unsupported for entropy/key derivation.
     raise ValueError("Unsupported media type for key derivation.")
 
 def derive_enc_key(raw_key: bytes, salt: bytes, passphrase: Optional[str]) -> bytes:
