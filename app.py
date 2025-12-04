@@ -343,7 +343,11 @@ def is_allowed_entropy_file(filename: str) -> bool:
     """
     Only allow certain image and video extensions to be used as entropy sources.
     """
-    ext = os.path.splitext(filename or "")[1].lower()
+    if not filename:
+        return False
+    # Strip whitespace and normalize to lowercase before checking extension
+    cleaned = (str(filename).strip()).lower()
+    ext = os.path.splitext(cleaned)[1]
     return ext in ALLOWED_ENTROPY_EXTS
 
 def validate_entropy_source(media_path: str) -> dict:
@@ -403,37 +407,28 @@ def _hash_file_bytes(media_path: str) -> bytes:
 
 def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> bytes:
     """
-    Support both images and videos.
-    - If image: hash pixel bytes.
-    - If video: sample up to frames_to_sample frames (evenly spaced if frame count known),
-                update hash incrementally to avoid large memory use.
-    Returns 32-byte SHA256 digest.
+    Derive raw key material from the entropy file *content* only.
+    This function ignores the filename and extension completely.
+
+    Strategy (best-effort):
+    - First, try to load as an image with OpenCV and hash the pixel bytes.
+    - If that fails, try to open as a video and hash up to `frames_to_sample` frames.
+    - If both fail for any reason, fall back to hashing the raw file bytes.
+
+    Returns a 32-byte SHA256 digest.
     """
-    ext = os.path.splitext(media_path.lower())[1]
-    img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
-    vid_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-
-    if ext in img_exts:
-        try:
-            img = cv2.imread(media_path, cv2.IMREAD_UNCHANGED)
-            if img is None:
-                return _hash_file_bytes(media_path)
+    # Try treating the file as an image
+    try:
+        img = cv2.imread(media_path, cv2.IMREAD_UNCHANGED)
+        if img is not None:
             return hashlib.sha256(img.tobytes()).digest()
-        except Exception:
-            return _hash_file_bytes(media_path)
+    except Exception:
+        pass
 
-    if ext in vid_exts:
-        try:
-            cap = cv2.VideoCapture(media_path)
-            if not cap.isOpened():
-                # small wait loop to avoid transient open issues
-                start = time.time()
-                while not cap.isOpened() and (time.time() - start) < 5.0:
-                    time.sleep(0.05)
-                if not cap.isOpened():
-                    cap.release()
-                    return _hash_file_bytes(media_path)
-
+    # If not clearly an image, try treating it as a video
+    try:
+        cap = cv2.VideoCapture(media_path)
+        if cap.isOpened():
             try:
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
             except Exception:
@@ -465,14 +460,16 @@ def generate_raw_key_from_media(media_path: str, frames_to_sample: int = 10) -> 
 
             cap.release()
 
-            if sampled == 0:
-                return _hash_file_bytes(media_path)
-            return hasher.digest()
-        except Exception:
-            return _hash_file_bytes(media_path)
+            if sampled > 0:
+                return hasher.digest()
+        else:
+            cap.release()
+    except Exception:
+        # Any video decoding issue falls through to raw file hash
+        pass
 
-    # For any other extension, treat as unsupported for entropy/key derivation.
-    raise ValueError("Unsupported media type for key derivation.")
+    # Fallback: hash full file bytes
+    return _hash_file_bytes(media_path)
 
 def derive_enc_key(raw_key: bytes, salt: bytes, passphrase: Optional[str]) -> bytes:
     """
