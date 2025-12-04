@@ -33,6 +33,59 @@
     <div class="container stack">
       {% block content %}{% endblock %}
     </div>
+
+    <script>
+      (function () {
+        const menu = document.getElementById('themeMenu');
+        const toggle = document.getElementById('themeToggle');
+        const picker = document.getElementById('themePicker');
+
+        if (!menu || !toggle || !picker) return;
+
+        toggle.addEventListener('click', function () {
+          menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+        });
+
+        window.addEventListener('click', function (e) {
+          if (!picker.contains(e.target)) {
+            menu.style.display = 'none';
+          }
+        });
+
+        function applyTheme(name) {
+          if (name && name !== 'hacker') {
+            document.documentElement.setAttribute('data-theme', name);
+          } else {
+            document.documentElement.removeAttribute('data-theme');
+          }
+        }
+
+        fetch('{{ url_for("get_theme") }}')
+          .then(function (r) { return r.json(); })
+          .then(function (j) { applyTheme(j.theme); })
+          .catch(function () { /* ignore */ });
+
+        Array.prototype.forEach.call(
+          menu.querySelectorAll('button'),
+          function (btn) {
+            btn.addEventListener('click', function () {
+              const theme = this.getAttribute('data-theme');
+              fetch('{{ url_for("set_theme") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme: theme })
+              }).then(function (r) {
+                if (r.ok) applyTheme(theme);
+                menu.style.display = 'none';
+              }).catch(function () {
+                applyTheme(theme);
+                menu.style.display = 'none';
+              });
+            });
+          }
+        );
+      })();
+    </script>
   </body>
 </html>
 

@@ -3,9 +3,22 @@
   <div class="card">
     <h2>Register</h2>
     <form method="POST">
-      Username: <input type="text" name="username" required><br>
-      Password: <input type="password" name="password" required><br>
-      Confirm: <input type="password" name="confirm" required><br>
+      <label for="username">Username</label>
+      <input
+        id="username"
+        type="text"
+        name="username"
+        required
+        pattern="^[A-Za-z0-9_]{3,32}$"
+        title="3–32 characters. Only letters A–Z, a–z, numbers 0–9 and underscore (_)."
+      ><br>
+      <p class="muted" style="margin-top:-6px;margin-bottom:10px;font-size:0.8rem;">
+        3–32 characters. You can use capital and small letters (A–Z, a–z), numbers (0–9) and underscore (_). Usernames are case-insensitive.
+      </p>
+      <label for="password">Password</label>
+      <input id="password" type="password" name="password" required><br>
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" type="password" name="confirm" required><br>
       <input type="submit" value="Create account">
     </form>
     {% if ok %}

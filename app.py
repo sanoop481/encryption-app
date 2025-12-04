@@ -153,8 +153,9 @@ TOKENS_SEND_DB_PATH = os.path.join(BASE_UPLOAD_FOLDER, "tokens_send.json")
 DEFAULT_TOKEN_TTL = 60 * 60 * 24  # 24 hours
 
 # Admin credentials - environment ONLY, no defaults. Application must fail if not set.
-ADMIN_USERNAME = os.environ["ADMIN_USERNAME"]
-ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
+# Strip whitespace to avoid subtle config errors.
+ADMIN_USERNAME = os.environ["ADMIN_USERNAME"].strip()
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"].strip()
 
 def _purge_expired(tokens: dict) -> dict:
     now = int(time.time())
@@ -277,7 +278,9 @@ def _save_users(users: dict) -> None:
 def _add_user(username: str, password: str) -> None:
     username = (username or "").strip()
     if not USERNAME_RE.match(username or ""):
-        raise ValueError("Username must be 3-32 characters: letters, numbers, underscore.")
+        raise ValueError(
+            "Username must be 3-32 characters, letters A-Z/a-z, digits 0-9 or underscore (_). Usernames are not case-sensitive."
+        )
     if username.lower() == ADMIN_USERNAME.lower():
         raise ValueError("Cannot register reserved username.")
     if not password or len(password) < 8:
@@ -1132,58 +1135,6 @@ base_css = """
     }
   }
 </style>
-<div class="topbar">
-  <div class="links">
-    <a href="/">Encrypt</a>
-    <a href="/decrypt">Decrypt</a>
-    <a href="/inbox">Inbox</a>
-    <a href="/admin">Admin</a>
-    <a href="/logout">Logout</a>
-  </div>
-  <div style="display:flex; gap:10px; align-items:center;">
-    <div class="theme-picker" id="themePicker">
-      <button class="theme-button" id="themeToggle" type="button">Theme</button>
-      <div class="theme-menu" id="themeMenu">
-        <button data-theme="hacker">Hacker (default)</button>
-        <button data-theme="modern">Modern</button>
-        <button data-theme="light">Light</button>
-        <button data-theme="retro">Retro</button>
-        <button data-theme="futuristic">Futuristic</button>
-      </div>
-    </div>
-  </div>
-  <script>
-    (function(){
-      const menu = document.getElementById('themeMenu');
-      const toggle = document.getElementById('themeToggle');
-      toggle.addEventListener('click', function(){ menu.style.display = menu.style.display === 'block' ? 'none' : 'block'; });
-      window.addEventListener('click', function(e){ if (!document.getElementById('themePicker').contains(e.target)) menu.style.display = 'none'; });
-
-      function applyTheme(name){
-        if (name && name !== 'hacker'){
-          document.documentElement.setAttribute('data-theme', name);
-        } else {
-          document.documentElement.removeAttribute('data-theme');
-        }
-      }
-
-      // Load server-saved theme
-      fetch('/get_theme').then(r => r.json()).then(j => { applyTheme(j.theme); });
-
-      // When user picks a theme, POST to server and apply immediately
-      Array.from(menu.querySelectorAll('button')).forEach(btn => {
-        btn.addEventListener('click', function(){
-          const theme = this.getAttribute('data-theme');
-          fetch('/set_theme', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ theme }) })
-            .then(r => {
-              if (r.ok) applyTheme(theme);
-              menu.style.display = 'none';
-            }).catch(()=>{ applyTheme(theme); menu.style.display = 'none'; });
-        });
-      });
-    })();
-  </script>
-</div>
 """
 
 @app.route("/get_theme")
