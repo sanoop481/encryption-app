@@ -1232,6 +1232,56 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    """
+    Simple profile page so users can see who is logged in and change their password.
+    Username changes are not supported here to avoid breaking existing inbox files/tokens.
+    """
+    username = session.get("username", "")
+    error = ""
+    message = ""
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password") or ""
+        new_password = request.form.get("new_password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
+
+        if not current_password or not new_password or not confirm_password:
+            error = "All fields are required."
+        elif new_password != confirm_password:
+            error = "New passwords do not match."
+        elif len(new_password) < 8:
+            error = "New password must be at least 8 characters."
+        else:
+            # Admin credentials are hard-coded in the application code,
+            # so changing them from the UI would not persist across deploys.
+            if username.lower() == ADMIN_USERNAME.lower():
+                error = "Admin password can only be changed by the site owner in the application code."
+            else:
+                # Verify current password first
+                if not _verify_user(username, current_password):
+                    error = "Current password is incorrect."
+                else:
+                    users = _load_users()
+                    key = username.lower()
+                    if key not in users:
+                        error = "User record not found."
+                    else:
+                        users[key] = generate_password_hash(new_password)
+                        _save_users(users)
+                        message = "Password updated successfully."
+
+    return render_template(
+        "profile.html",
+        base_css=base_css,
+        username=username,
+        error=error or None,
+        message=message or None,
+    )
+
 @app.route("/", methods=["GET", "POST"])
 @login_required
 def index():

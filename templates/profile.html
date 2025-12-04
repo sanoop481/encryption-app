@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card">
+    <h2>Account</h2>
+    <p class="muted">You are currently logged in as <strong>{{ username }}</strong>.</p>
+  </div>
+
+  <div class="card">
+    <h3>Change Password</h3>
+    {% if error %}
+      <div class="alert-error">{{ error }}</div>
+    {% endif %}
+    {% if message %}
+      <div class="alert-success">{{ message }}</div>
+    {% endif %}
+    <form method="post">
+      <label for="current_password">Current password</label>
+      <input type="password" id="current_password" name="current_password" required>
+
+      <label for="new_password">New password</label>
+      <input type="password" id="new_password" name="new_password" required>
+
+      <label for="confirm_password">Confirm new password</label>
+      <input type="password" id="confirm_password" name="confirm_password" required>
+
+      <input type="submit" value="Update Password">
+    </form>
+  </div>
+{% endblock %}
+
+

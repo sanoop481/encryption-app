@@ -2,74 +2,99 @@
 {% block content %}
   <div class="card">
     <h2>Admin Dashboard</h2>
-    <p>Welcome, <strong>{{ current_user }}</strong>!</p>
+    <p class="muted">Signed in as <strong>{{ current_user }}</strong>.</p>
     {% if error %}
       <div class="alert-error">{{ error }}</div>
     {% endif %}
+  </div>
 
-    <h3>User Management</h3>
-    <table style="width:100%; border-collapse:collapse; border:1px solid var(--border);">
-      <thead>
-        <tr><th>Username</th><th>Role</th><th>Files</th><th>Actions</th></tr>
+  <div class="card">
+    <h3>Users</h3>
+    <p class="muted">All registered accounts. Admin cannot be deleted and has full access.</p>
+    <table style="width:100%; border-collapse:collapse; border:1px solid var(--border); font-size:0.9rem;">
+      <thead style="background:rgba(15,23,42,0.9);">
+        <tr>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Username</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Role</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Inbox Files</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% if users %}
           {% for row in users %}
-            <tr>
-              <td>{{ row.username }}</td>
-              <td>{{ row.role }}</td>
-              <td>
+            <tr style="border-top:1px solid var(--border);">
+              <td style="padding:8px;">{{ row.username }}</td>
+              <td style="padding:8px;">{{ row.role }}</td>
+              <td style="padding:8px;">
                 {% if row.can_view_files %}
-                  <a href="{{ url_for('admin_user_files', username=row.username_safe) }}">View Files</a>
+                  <a href="{{ url_for('admin_user_files', username=row.username_safe) }}">View inbox</a>
                 {% else %}
-                  N/A
+                  Not applicable
                 {% endif %}
               </td>
-              <td>
+              <td style="padding:8px;">
                 {% if row.can_delete %}
                   <a href="{{ url_for('admin_delete_user', username=row.username_safe) }}"
-                     onclick="return confirm('Delete user {{ row.username }}?')">Delete</a>
+                     onclick="return confirm('Delete user {{ row.username }} and all their inbox files?')">
+                    Delete user
+                  </a>
                 {% else %}
-                  N/A
+                  —
                 {% endif %}
               </td>
             </tr>
           {% endfor %}
         {% else %}
-          <tr><td colspan="4">No users</td></tr>
+          <tr><td colspan="4" style="padding:8px;">No users.</td></tr>
         {% endif %}
       </tbody>
     </table>
+  </div>
 
-    <h3>Active Tokens</h3>
-    <table style="width:100%; border-collapse:collapse; border:1px solid var(--border);">
-      <thead>
-        <tr><th>Token</th><th>Owner</th><th>Filename</th><th>Type</th><th>Action</th></tr>
+  <div class="card">
+    <h3>Active File Tokens</h3>
+    <p class="muted">
+      One-time and transfer tokens that reference encrypted files. Use this to inspect or download files if needed.
+    </p>
+    <table style="width:100%; border-collapse:collapse; border:1px solid var(--border); font-size:0.9rem;">
+      <thead style="background:rgba(15,23,42,0.9);">
+        <tr>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Token (prefix)</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Owner</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Filename</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Type</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Admin action</th>
+        </tr>
       </thead>
       <tbody>
         {% if tokens %}
           {% for t in tokens %}
-            <tr>
-              <td>{{ t.prefix }}...</td>
-              <td>{{ t.owner }}</td>
-              <td>{{ t.filename }}</td>
-              <td>{{ t.type }}</td>
-              <td><a href="{{ url_for('admin_download_token', token=t.token) }}">Download</a></td>
+            <tr style="border-top:1px solid var(--border);">
+              <td style="padding:8px;"><code>{{ t.prefix }}...</code></td>
+              <td style="padding:8px;">{{ t.owner }}</td>
+              <td style="padding:8px;">{{ t.filename }}</td>
+              <td style="padding:8px;">{{ t.type }}</td>
+              <td style="padding:8px;">
+                <a href="{{ url_for('admin_download_token', token=t.token) }}">Download file</a>
+              </td>
             </tr>
           {% endfor %}
         {% else %}
-          <tr><td colspan="5">No tokens</td></tr>
+          <tr><td colspan="5" style="padding:8px;">No active tokens.</td></tr>
         {% endif %}
       </tbody>
     </table>
+  </div>
 
-    <div style="margin-top:20px;">
-      <h3>Quick Actions</h3>
-      <p>
-        <a href="{{ url_for('index') }}" class="card" style="display:inline-block; padding:10px; margin:5px;">Go to Encryption</a>
-        <a href="{{ url_for('logout') }}" class="card" style="display:inline-block; padding:10px; margin:5px;">Logout</a>
-      </p>
-    </div>
+  <div class="card">
+    <h3>Quick Actions</h3>
+    <p class="muted">Common navigation for the site owner.</p>
+    <p style="margin-top:8px;">
+      <a href="{{ url_for('index') }}" class="muted">Go to encryption page</a> ·
+      <a href="{{ url_for('inbox') }}" class="muted">View my inbox</a> ·
+      <a href="{{ url_for('logout') }}" class="muted">Log out</a>
+    </p>
   </div>
 {% endblock %}
 
