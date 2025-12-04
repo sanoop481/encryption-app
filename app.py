@@ -305,7 +305,18 @@ def _verify_user(username: str, password: str) -> bool:
     ph = users.get(username.lower())
     if not isinstance(ph, str):
         return False
-    return check_password_hash(ph, password)
+
+    # Prefer secure hash verification
+    try:
+        if ph.startswith("pbkdf2:"):
+            return check_password_hash(ph, password)
+    except Exception:
+        # Fall back to plaintext comparison below
+        pass
+
+    # Backward compatibility: if a plaintext password ever slipped through,
+    # allow direct comparison so existing users are not locked out.
+    return ph == password
 
 def _user_exists(username: str) -> bool:
     uname = (username or "").strip()
